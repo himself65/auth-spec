@@ -5,9 +5,6 @@
   "author": {
     "name": "himself65"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/himself65/auth-spec"
-  },
+  "repository": "https://github.com/himself65/auth-spec",
   "license": "MIT"
 }
