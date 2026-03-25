@@ -1,0 +1,13 @@
+{
+  "name": "auth",
+  "description": "Auth skills for Claude Code",
+  "version": "0.0.1",
+  "author": {
+    "name": "himself65"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/himself65/auth-spec"
+  },
+  "license": "MIT"
+}

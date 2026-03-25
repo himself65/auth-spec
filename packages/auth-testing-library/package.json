@@ -1,0 +1,42 @@
+{
+  "name": "auth-testing-library",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "auth-testing-library": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./test-cases": {
+      "import": "./dist/test-cases.js",
+      "types": "./dist/test-cases.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client.js",
+      "types": "./dist/client.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@faker-js/faker": "^10.4.0",
+    "@inkjs/ui": "^2.0.0",
+    "ink": "^6.8.0",
+    "react": "^19.2.4"
+  }
+}
