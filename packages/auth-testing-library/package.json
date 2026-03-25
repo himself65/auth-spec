@@ -16,6 +16,10 @@
       "import": "./dist/test-cases.js",
       "types": "./dist/test-cases.d.ts"
     },
+    "./test-cases/*": {
+      "import": "./dist/test-cases-*.js",
+      "types": "./dist/test-cases-*.d.ts"
+    },
     "./client": {
       "import": "./dist/client.js",
       "types": "./dist/client.d.ts"

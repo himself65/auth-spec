@@ -52,13 +52,63 @@ Ask "How should sessions be managed?" with header "Sessions".
 - **Database sessions (Recommended)** — "Server-side sessions stored in your database. More secure — sessions can be revoked instantly"
 - **JWT tokens** — "Stateless tokens signed by the server. Simpler to scale, but harder to revoke"
 
-## Step 3: Wait for Answers
+## Step 3: Ask Which Features to Add
 
-**Do not write any code until the user has answered all questions.** Once you have their selections, proceed to Step 4.
+After the user answers the stack questions, use `AskUserQuestion` again to ask which additional auth features they want. Use **multiSelect: true** so they can pick multiple features at once.
 
-## Step 4: Generate Auth
+### Question 1: Authentication Methods
 
-Once you have the context, generate the following using the schema and endpoint specs below.
+Ask "Which authentication methods do you want to add?" with header "Auth methods". Set multiSelect to true.
+
+- **Email OTP** — "Passwordless sign-in via one-time codes sent to email"
+- **Magic Link** — "Passwordless sign-in via emailed links"
+- **Phone Number** — "SMS-based OTP authentication"
+- **Passkey** — "WebAuthn/FIDO2 passwordless authentication"
+
+### Question 2: Security Features
+
+Ask "Which security features do you want?" with header "Security". Set multiSelect to true.
+
+- **Two-Factor Auth (Recommended)** — "TOTP-based second factor with backup codes"
+- **Captcha** — "Bot protection on sign-up and sign-in (reCAPTCHA, hCaptcha, Turnstile)"
+- **Password Breach Check** — "Check passwords against the Have I Been Pwned database"
+- **Rate Limiting** — "Throttle auth endpoints to prevent brute-force attacks"
+
+### Question 3: Additional Capabilities
+
+Ask "Any additional capabilities?" with header "Extras". Set multiSelect to true.
+
+- **Multi-Session** — "Allow multiple concurrent sessions per user"
+- **Username Auth** — "Sign in with username instead of (or in addition to) email"
+- **Organization / Teams** — "Multi-tenant support with roles, invitations, and RBAC"
+- **API Keys** — "Generate API keys for programmatic access"
+
+## Step 4: Wait for All Answers
+
+**Do not write any code until the user has answered all questions.** Once you have their selections, proceed to Step 5.
+
+## Step 5: Generate Auth
+
+Generate the core auth (schema + endpoints below) **plus** any selected features. For each selected feature, read the matching reference file from `references/features/` to get the schema additions, endpoint specs, and implementation details.
+
+| Feature             | Reference file                          |
+|---------------------|-----------------------------------------|
+| Email OTP           | `references/features/email-otp.md`      |
+| Magic Link          | `references/features/magic-link.md`     |
+| Phone Number        | `references/features/phone-number.md`   |
+| Passkey             | `references/features/passkey.md`        |
+| Two-Factor Auth     | `references/features/two-factor.md`     |
+| Captcha             | `references/features/captcha.md`        |
+| Password Breach     | `references/features/password-breach.md` |
+| Rate Limiting       | `references/features/rate-limiting.md`  |
+| Multi-Session       | `references/features/multi-session.md`  |
+| Username Auth       | `references/features/username.md`       |
+| Organization/Teams  | `references/features/organization.md`   |
+| API Keys            | `references/features/api-key.md`        |
+
+### Core Schema and Endpoints
+
+Generate the following core auth using the schema and endpoint specs below.
 
 **Adapt everything to the user's language/framework idioms:**
 - Naming: `email_verified` (snake_case) in Python/Go/Rust, `emailVerified` (camelCase) in JS/TS, `EmailVerified` (PascalCase) in C#

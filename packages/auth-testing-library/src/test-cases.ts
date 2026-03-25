@@ -4,7 +4,21 @@ import type { AuthResponse } from './types.js';
 
 export type AuthTestFn = (client: AuthClient) => Promise<void>;
 
-export type AuthTestCategory = 'sign-up' | 'sign-in' | 'session' | 'sign-out' | 'lifecycle' | 'security';
+export type AuthTestCategory =
+  | 'sign-up'
+  | 'sign-in'
+  | 'session'
+  | 'sign-out'
+  | 'lifecycle'
+  | 'security'
+  | 'email-otp'
+  | 'magic-link'
+  | 'phone'
+  | 'two-factor'
+  | 'multi-session'
+  | 'username'
+  | 'organization'
+  | 'api-key';
 
 export interface AuthTestCase {
   name: string;
