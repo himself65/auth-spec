@@ -7,27 +7,56 @@ description: Scaffold signin and signup authentication endpoints for a project. 
 
 You are scaffolding authentication (signin + signup) for the user's project.
 
-## Step 1: Gather Context
+## Step 1: Detect Existing Project Context
 
-Before writing any code, ask the user:
+Before asking any questions, scan the user's project to detect their stack:
 
-1. **Language/framework** — What language and framework are you using?
-   - JavaScript/TypeScript: Next.js, Express, Hono, Fastify, etc.
-   - Python: FastAPI, Django, Flask, etc.
-   - Go: net/http, Gin, Echo, Fiber, Chi, etc.
-   - Rust: Axum, Actix-web, Rocket, etc.
-   - C/C++: Crow, Drogon, cpp-httplib, etc.
-   - Java/Kotlin: Spring Boot, Ktor, etc.
-   - Or any other language/framework
-2. **Database/ORM** — What database and data access layer?
-   - SQL: PostgreSQL, MySQL, SQLite + ORM/query builder (Prisma, Drizzle, SQLAlchemy, GORM, Diesel, sqlx, etc.)
-   - NoSQL: MongoDB, DynamoDB, etc.
-   - Or raw queries / custom layer
-3. **Session strategy** — Do you want session-based auth (database sessions) or token-based auth (JWT)?
+1. Look for framework config files (e.g., `next.config.*`, `package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `build.gradle*`, `pom.xml`)
+2. Look for existing database/ORM setup (e.g., `prisma/schema.prisma`, `drizzle.config.*`, `alembic/`, `diesel.toml`, `ormconfig.*`)
+3. Look for existing auth code or dependencies
 
-Wait for the user's answers before proceeding. Also look at the user's existing project to infer context — if they already have a framework and database set up, confirm rather than ask from scratch.
+Use what you find to pre-select the best options in the questions below. If the project clearly uses a specific stack, set that as the recommended option.
 
-## Step 2: Generate Auth
+## Step 2: Gather Context with Interactive Questions
+
+Use the `AskUserQuestion` tool to ask the user to make selections. Ask up to 3 questions in a **single** `AskUserQuestion` call so the user can answer everything at once.
+
+### Question 1: Language/Framework
+
+Ask "Which language and framework are you using?" with header "Framework".
+
+Pick the top 4 most relevant options based on what you detected in the project. If you detected the framework, put it first and mark it "(Recommended)". If you could not detect it, use these defaults:
+
+- **Next.js** — "TypeScript, App Router, API routes"
+- **Express** — "TypeScript/JavaScript, minimal and flexible"
+- **FastAPI** — "Python, async-first with type hints"
+- **Go + Chi** — "Go, lightweight and idiomatic"
+
+The user can always pick "Other" to specify a different stack.
+
+### Question 2: Database/ORM
+
+Ask "Which database and ORM/query layer?" with header "Database".
+
+Again, pick the top 4 most relevant options based on the project. If detected, mark it "(Recommended)". Defaults:
+
+- **PostgreSQL + Prisma** — "Type-safe ORM with migrations (JS/TS)"
+- **PostgreSQL + Drizzle** — "Lightweight TypeScript ORM, SQL-like syntax"
+- **PostgreSQL + SQLAlchemy** — "Full-featured Python ORM"
+- **SQLite + raw queries** — "Simple, no server needed, good for prototyping"
+
+### Question 3: Session Strategy
+
+Ask "How should sessions be managed?" with header "Sessions".
+
+- **Database sessions (Recommended)** — "Server-side sessions stored in your database. More secure — sessions can be revoked instantly"
+- **JWT tokens** — "Stateless tokens signed by the server. Simpler to scale, but harder to revoke"
+
+## Step 3: Wait for Answers
+
+**Do not write any code until the user has answered all questions.** Once you have their selections, proceed to Step 4.
+
+## Step 4: Generate Auth
 
 Once you have the context, generate the following using the schema and endpoint specs below.
 
