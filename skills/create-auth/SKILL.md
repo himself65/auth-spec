@@ -191,6 +191,23 @@ Create these tables/models:
 - Follow the project's existing code style, file structure, and patterns
 - If the language has a strong type system (Rust, Go, C++, etc.), define proper types/structs for request/response bodies — do not use untyped maps
 
+## Step 6: Run the Migration
+
+After generating all code, **run the database migration automatically** so the user doesn't hit "table does not exist" errors. Use the project's existing database driver/connection to execute the migration SQL.
+
+For JS/TS projects using `@neondatabase/serverless`, the tagged-template `sql` function cannot run plain SQL strings. Use `sql.query(statement)` instead when executing migration statements programmatically.
+
+## Common Pitfalls
+
+Before generating code, read **all** files in `references/pitfalls/` and follow their rules strictly. These are real bugs encountered in production.
+
+| Pitfall | Reference file |
+|---------|---------------|
+| API routes must catch DB errors | `references/pitfalls/api-error-handling.md` |
+| Sign-up catch must not re-throw | `references/pitfalls/signup-rethrow.md` |
+| Auth helpers must not throw | `references/pitfalls/auth-helpers-no-throw.md` |
+| Client must handle non-JSON | `references/pitfalls/client-json-parsing.md` |
+
 ## Reference Implementations
 
 Full working examples are in the `references/` directory alongside this skill. Use the matching reference as a starting point and adapt to the user's specific setup:
