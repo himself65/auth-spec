@@ -2,6 +2,10 @@
 
 A toolkit that helps you **build authentication from scratch** and **test that it works correctly**.
 
+```shell
+npx skills add himself65/auth-spec
+```
+
 ## What is this?
 
 When you build a web app, users need to sign up, sign in, and sign out. This project gives you two things:
