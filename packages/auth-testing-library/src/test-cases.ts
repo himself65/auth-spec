@@ -11,6 +11,7 @@ export type AuthTestCategory =
   | 'sign-out'
   | 'lifecycle'
   | 'security'
+  | 'passkey'
   | 'email-otp'
   | 'magic-link'
   | 'phone'

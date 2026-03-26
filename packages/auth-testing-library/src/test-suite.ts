@@ -3,6 +3,7 @@ import { authTestCases } from './test-cases.js';
 import type { AuthTestCase } from './test-cases.js';
 import type { TestConfig, TestResult, TestSuiteResult } from './types.js';
 
+import { passkeyTestCases } from './test-cases-passkey.js';
 import { emailOtpTestCases } from './test-cases-email-otp.js';
 import { magicLinkTestCases } from './test-cases-magic-link.js';
 import { phoneTestCases } from './test-cases-phone.js';
@@ -14,6 +15,7 @@ import { apiKeyTestCases } from './test-cases-api-key.js';
 
 /** All feature test case modules, keyed by feature name. */
 export const featureTestCases: Record<string, AuthTestCase[]> = {
+  passkey: passkeyTestCases,
   'email-otp': emailOtpTestCases,
   'magic-link': magicLinkTestCases,
   phone: phoneTestCases,

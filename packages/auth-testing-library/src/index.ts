@@ -10,6 +10,10 @@ export type {
   TestSuiteResult,
   AuthResponse,
   SessionResponse,
+  PasskeyRegistrationOptionsResponse,
+  PasskeyRegistrationVerifyResponse,
+  PasskeyAuthenticationOptionsResponse,
+  PasskeyListItem,
   EmailOtpSendResponse,
   EmailOtpVerifyResponse,
   MagicLinkSendResponse,
@@ -39,6 +43,7 @@ export {
   assertHasField,
   assertNoField,
 } from './test-cases.js';
+export { passkeyTestCases } from './test-cases-passkey.js';
 export { emailOtpTestCases } from './test-cases-email-otp.js';
 export { magicLinkTestCases } from './test-cases-magic-link.js';
 export { phoneTestCases } from './test-cases-phone.js';

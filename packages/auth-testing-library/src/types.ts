@@ -82,6 +82,51 @@ export interface PhoneVerifyResponse {
   token: string;
 }
 
+// --- Feature: Passkey ---
+
+export interface PasskeyRegistrationOptionsResponse {
+  rp: { id: string; name: string };
+  user: { id: string; name: string; displayName: string };
+  challenge: string;
+  pubKeyCredParams: { type: string; alg: number }[];
+  timeout?: number;
+  authenticatorSelection?: Record<string, unknown>;
+  attestation?: string;
+  excludeCredentials?: { id: string; type: string; transports?: string[] }[];
+}
+
+export interface PasskeyRegistrationVerifyResponse {
+  id: string;
+  name?: string | null;
+  deviceType?: string;
+  backedUp?: boolean;
+  transports?: string[];
+  createdAt?: string;
+  created_at?: string;
+}
+
+export interface PasskeyAuthenticationOptionsResponse {
+  challenge: string;
+  rpId?: string;
+  timeout?: number;
+  userVerification?: string;
+  allowCredentials?: { id: string; type: string; transports?: string[] }[];
+}
+
+export interface PasskeyListItem {
+  id: string;
+  name?: string | null;
+  deviceType?: string;
+  device_type?: string;
+  backedUp?: boolean;
+  backed_up?: boolean;
+  transports?: string[];
+  lastUsedAt?: string | null;
+  last_used_at?: string | null;
+  createdAt?: string;
+  created_at?: string;
+}
+
 // --- Feature: Two-Factor ---
 
 export interface TwoFactorEnableResponse {

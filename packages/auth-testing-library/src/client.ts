@@ -2,6 +2,10 @@ import type {
   TestConfig,
   AuthResponse,
   SessionResponse,
+  PasskeyRegistrationOptionsResponse,
+  PasskeyRegistrationVerifyResponse,
+  PasskeyAuthenticationOptionsResponse,
+  PasskeyListItem,
   EmailOtpSendResponse,
   EmailOtpVerifyResponse,
   MagicLinkSendResponse,
@@ -93,6 +97,71 @@ export class AuthClient {
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     const res = await this.request('/sign-out', {
       method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  // --- Passkey ---
+
+  async passkeyRegisterOptions(
+    token: string,
+  ): Promise<{ status: number; body: PasskeyRegistrationOptionsResponse | Record<string, unknown> }> {
+    const res = await this.request('/passkey/register/options', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  async passkeyRegisterVerify(
+    token: string,
+    body: { credential: Record<string, unknown> },
+  ): Promise<{ status: number; body: PasskeyRegistrationVerifyResponse | Record<string, unknown> }> {
+    const res = await this.request('/passkey/register/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  async passkeyAuthenticateOptions(
+    body?: { email?: string },
+  ): Promise<{ status: number; body: PasskeyAuthenticationOptionsResponse | Record<string, unknown> }> {
+    const res = await this.request('/passkey/authenticate/options', {
+      method: 'POST',
+      body: JSON.stringify(body ?? {}),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  async passkeyAuthenticateVerify(
+    body: { credential: Record<string, unknown> },
+  ): Promise<{ status: number; body: AuthResponse | Record<string, unknown> }> {
+    const res = await this.request('/passkey/authenticate/verify', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  async passkeyList(
+    token: string,
+  ): Promise<{ status: number; body: { passkeys: PasskeyListItem[] } | Record<string, unknown> }> {
+    const res = await this.request('/passkey', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  async passkeyDelete(
+    token: string,
+    passkeyId: string,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const res = await this.request(`/passkey/${passkeyId}`, {
+      method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
     return { status: res.status, body: await res.json() };

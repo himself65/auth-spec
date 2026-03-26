@@ -38,6 +38,17 @@ Use one of the `AuthTestCategory` values:
 - `sign-out` — tests for POST /api/auth/sign-out
 - `lifecycle` — tests spanning multiple endpoints
 - `security` — security-focused tests (timing, headers, etc.)
+- `passkey` — tests for passkey/WebAuthn endpoints (in `test-cases-passkey.ts`)
+- `email-otp` — tests for email OTP endpoints (in `test-cases-email-otp.ts`)
+- `magic-link` — tests for magic link endpoints (in `test-cases-magic-link.ts`)
+- `phone` — tests for phone number endpoints (in `test-cases-phone.ts`)
+- `two-factor` — tests for 2FA endpoints (in `test-cases-two-factor.ts`)
+- `multi-session` — tests for session management (in `test-cases-multi-session.ts`)
+- `username` — tests for username endpoints (in `test-cases-username.ts`)
+- `organization` — tests for org/team endpoints (in `test-cases-organization.ts`)
+- `api-key` — tests for API key endpoints (in `test-cases-api-key.ts`)
+
+For core categories (sign-up, sign-in, session, sign-out, lifecycle, security), add tests to `test-cases.ts`. For feature categories, add tests to the corresponding `test-cases-<feature>.ts` file.
 
 ### Available helpers
 
