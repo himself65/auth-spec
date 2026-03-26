@@ -107,20 +107,19 @@ def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
-@router.post("/sign-up", response_model=AuthResponse, status_code=201)
+@router.post("/sign-up", response_model=AuthResponse)
 async def sign_up(req: SignUpRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == req.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Email already registered")
-
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    # Always hash password to prevent timing-based email enumeration
+    hashed = hash_password(req.password)
 
     user = User(email=req.email, name=req.name)
     account = Account(
         user_id=user.id,
         provider_id="credential",
-        password_hash=hash_password(req.password),
+        password_hash=hashed,
     )
     token = secrets.token_hex(32)
     session = Session(
@@ -129,9 +128,18 @@ async def sign_up(req: SignUpRequest, db: AsyncSession = Depends(get_db)):
         expires_at=datetime.now(timezone.utc) + SESSION_DURATION,
     )
 
-    db.add_all([user, account, session])
-    await db.commit()
-    await db.refresh(user)
+    try:
+        db.add_all([user, account, session])
+        await db.commit()
+        await db.refresh(user)
+    except Exception:
+        await db.rollback()
+        # Unique constraint violation (duplicate email) — return fake success
+        # to prevent email enumeration. The dummy token won't resolve to a session.
+        return AuthResponse(
+            user=UserResponse(id=str(uuid.uuid4()), email=req.email, name=req.name),
+            token=secrets.token_hex(32),
+        )
 
     return AuthResponse(
         user=UserResponse.model_validate(user),

@@ -97,29 +97,37 @@ class AuthController(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid email or password (min 8 chars)")
         }
 
-        if (userRepo.findByEmail(req.email) != null) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "Email already registered")
+        // Always hash password to prevent timing-based email enumeration
+        val passwordHash = encoder.encode(req.password)
+
+        try {
+            val user = userRepo.save(User(email = req.email, name = req.name))
+
+            accountRepo.save(Account(
+                userId = user.id,
+                providerId = "credential",
+                passwordHash = passwordHash,
+            ))
+
+            val token = generateToken()
+            sessionRepo.save(Session(
+                userId = user.id,
+                token = token,
+                expiresAt = Instant.now().plus(sessionDuration, ChronoUnit.DAYS),
+            ))
+
+            return ResponseEntity.ok(AuthResponse(
+                user = UserResponse(user.id, user.email, user.name),
+                token = token,
+            ))
+        } catch (e: Exception) {
+            // Unique constraint violation (duplicate email) — return fake success
+            // to prevent email enumeration. The dummy token won't resolve to a session.
+            return ResponseEntity.ok(AuthResponse(
+                user = UserResponse(UUID.randomUUID().toString(), req.email, req.name),
+                token = generateToken(),
+            ))
         }
-
-        val user = userRepo.save(User(email = req.email, name = req.name))
-
-        accountRepo.save(Account(
-            userId = user.id,
-            providerId = "credential",
-            passwordHash = encoder.encode(req.password),
-        ))
-
-        val token = generateToken()
-        sessionRepo.save(Session(
-            userId = user.id,
-            token = token,
-            expiresAt = Instant.now().plus(sessionDuration, ChronoUnit.DAYS),
-        ))
-
-        return ResponseEntity.status(HttpStatus.CREATED).body(AuthResponse(
-            user = UserResponse(user.id, user.email, user.name),
-            token = token,
-        ))
     }
 
     @PostMapping("/sign-in")

@@ -107,20 +107,7 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check existing user
-	var exists bool
-	err := h.db.QueryRowContext(r.Context(),
-		"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)", req.Email,
-	).Scan(&exists)
-	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-		return
-	}
-	if exists {
-		http.Error(w, `{"error":"email already registered"}`, http.StatusConflict)
-		return
-	}
-
+	// Always hash password to prevent timing-based email enumeration
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
@@ -143,6 +130,17 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		userID, req.Email, req.Name, now,
 	)
 	if err != nil {
+		// Unique constraint violation (duplicate email) — return fake success
+		// to prevent email enumeration. The dummy token won't resolve to a session.
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(AuthResponse{
+				User:  User{ID: uuid.New().String(), Email: req.Email, Name: req.Name, CreatedAt: now, UpdatedAt: now},
+				Token: generateToken(),
+			})
+			return
+		}
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
 	}
@@ -172,7 +170,7 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(AuthResponse{
 		User:  User{ID: userID, Email: req.Email, Name: req.Name, CreatedAt: now, UpdatedAt: now},
 		Token: token,

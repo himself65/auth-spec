@@ -51,41 +51,45 @@ export async function POST(request: Request) {
     );
   }
 
-  const existing = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
-  if (existing.length > 0) {
-    return NextResponse.json(
-      { error: "Email already registered" },
-      { status: 409 }
-    );
-  }
-
+  // Always hash the password to prevent timing-based email enumeration
   const userId = crypto.randomUUID();
   const sessionToken = crypto.randomUUID();
   const passwordHash = await hash(password, 12);
 
-  await db.transaction(async (tx) => {
-    await tx.insert(users).values({
-      id: userId,
-      email,
-      name: name ?? null,
+  try {
+    await db.transaction(async (tx) => {
+      await tx.insert(users).values({
+        id: userId,
+        email,
+        name: name ?? null,
+      });
+      await tx.insert(accounts).values({
+        id: crypto.randomUUID(),
+        userId,
+        providerId: "credential",
+        passwordHash,
+      });
+      await tx.insert(sessions).values({
+        id: crypto.randomUUID(),
+        userId,
+        token: sessionToken,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
     });
-    await tx.insert(accounts).values({
-      id: crypto.randomUUID(),
-      userId,
-      providerId: "credential",
-      passwordHash,
-    });
-    await tx.insert(sessions).values({
-      id: crypto.randomUUID(),
-      userId,
-      token: sessionToken,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    });
-  });
+  } catch (err: unknown) {
+    // Unique constraint violation (duplicate email) — return fake success
+    // to prevent email enumeration. The dummy token won't resolve to a session.
+    if (
+      err instanceof Error &&
+      (err.message.includes("unique") || err.message.includes("duplicate"))
+    ) {
+      return NextResponse.json({
+        user: { id: crypto.randomUUID(), email, name: name ?? null },
+        token: crypto.randomUUID(),
+      });
+    }
+    throw err;
+  }
 
   return NextResponse.json({
     user: { id: userId, email, name: name ?? null },

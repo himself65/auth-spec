@@ -159,7 +159,7 @@ Create these tables/models:
 - Hash password with a strong algorithm (bcrypt, argon2, or scrypt — use whichever is idiomatic for the language)
 - Create User + Account (providerId: "credential") + Session
 - Return session token and user (without password)
-- Return 409 if email already exists
+- **Email enumeration protection:** If the email already exists, return the same `200 OK` status and same response shape as a successful sign-up — do not return 409 or any error that reveals the email is taken. The response should be indistinguishable from a real sign-up. Implementation: attempt the insert, catch the unique constraint violation, hash the password anyway (to keep timing consistent), and return a fake success with a dummy user ID and token (that won't actually work as a session). This prevents attackers from discovering which emails are registered via the sign-up endpoint.
 
 **POST /api/auth/sign-in**
 - Body: `{ email, password }`
@@ -180,12 +180,14 @@ Create these tables/models:
 
 ### Implementation Rules
 
-- Use crypto-random IDs for all primary keys and session tokens — use the idiomatic method for the language
+- **Write all auth code by hand.** Do NOT use auth libraries (better-auth, next-auth, Auth.js, lucia, passport, etc.). The only external dependencies allowed are: the web framework itself, the database/ORM layer, and a password hashing library (bcrypt, argon2, scrypt). Everything else — session management, token generation, route handlers — must be written directly. Keep it minimal.
+- Use crypto-random IDs for all primary keys and session tokens — use the idiomatic method for the language (`crypto.randomUUID()`, `uuid.New()`, `Uuid::new_v4()`, `secrets.token_hex()`, etc.)
 - Hash passwords with a strong algorithm — use what's standard for the ecosystem (bcrypt, argon2, scrypt, libsodium, etc.)
 - Never log or expose password hashes
 - Use constant-time comparison for password verification (the hashing library handles this)
 - Set session expiry to 7 days by default
 - Return generic "Invalid credentials" on sign-in failure — do not reveal whether the email exists
+- **Prevent email enumeration on sign-up:** When a duplicate email is submitted, return the same status code and response shape as a successful sign-up. Always hash the password (even for duplicates) to prevent timing-based detection. Return a plausible but non-functional fake token and user ID so the response is indistinguishable from a real sign-up.
 - Follow the project's existing code style, file structure, and patterns
 - If the language has a strong type system (Rust, Go, C++, etc.), define proper types/structs for request/response bodies — do not use untyped maps
 

@@ -72,7 +72,7 @@ export const authTestCases: AuthTestCase[] = [
     async fn(client) {
       const email = randomEmail();
       const res = await client.signUp({ email, password: TEST_PASSWORD, name: randomName() });
-      assertStatus(res.status, 201, 'sign-up');
+      assertStatus(res.status, 200, 'sign-up');
       const body = res.body as AuthResponse;
       assertHasField(body as unknown as Record<string, unknown>, 'token', 'sign-up response');
       assertHasField(body as unknown as Record<string, unknown>, 'user', 'sign-up response');
@@ -84,13 +84,32 @@ export const authTestCases: AuthTestCase[] = [
     },
   },
   {
-    name: 'rejects duplicate email',
+    name: 'duplicate email returns same status and shape as fresh sign-up (no enumeration)',
     category: 'sign-up',
     async fn(client) {
       const email = randomEmail();
-      await client.signUp({ email, password: TEST_PASSWORD });
-      const res = await client.signUp({ email, password: TEST_PASSWORD });
-      assertStatus(res.status, 409, 'duplicate sign-up');
+      const first = await client.signUp({ email, password: TEST_PASSWORD });
+      const second = await client.signUp({ email, password: TEST_PASSWORD });
+
+      if (first.status !== second.status) {
+        throw new Error(
+          `email enumeration: fresh sign-up status (${first.status}) differs from duplicate sign-up status (${second.status})`,
+        );
+      }
+
+      const firstBody = first.body as Record<string, unknown>;
+      const secondBody = second.body as Record<string, unknown>;
+
+      assertHasField(secondBody, 'token', 'duplicate sign-up response');
+      assertHasField(secondBody, 'user', 'duplicate sign-up response');
+
+      const firstKeys = Object.keys(firstBody).sort().join(',');
+      const secondKeys = Object.keys(secondBody).sort().join(',');
+      if (firstKeys !== secondKeys) {
+        throw new Error(
+          `email enumeration: response keys differ — fresh [${firstKeys}] vs duplicate [${secondKeys}]`,
+        );
+      }
     },
   },
   {
@@ -259,7 +278,7 @@ export const authTestCases: AuthTestCase[] = [
     async fn(client) {
       const email = randomEmail();
       const signUp = await client.signUp({ email, password: TEST_PASSWORD, name: randomName() });
-      assertStatus(signUp.status, 201, 'lifecycle sign-up');
+      assertStatus(signUp.status, 200, 'lifecycle sign-up');
       const token = (signUp.body as AuthResponse).token;
 
       const session = await client.getSession(token);
@@ -330,34 +349,68 @@ export const authTestCases: AuthTestCase[] = [
     },
   },
   {
-    name: 'sign-up error does not leak that email is registered',
+    name: 'sign-up does not enumerate emails (status, shape, and error fields match)',
+    category: 'security',
+    async fn(client) {
+      const existingEmail = randomEmail();
+      await client.signUp({ email: existingEmail, password: TEST_PASSWORD });
+
+      const freshRes = await client.signUp({ email: randomEmail(), password: TEST_PASSWORD });
+      const dupeRes = await client.signUp({ email: existingEmail, password: TEST_PASSWORD });
+
+      // Status codes must be identical
+      if (freshRes.status !== dupeRes.status) {
+        throw new Error(
+          `email enumeration via sign-up: fresh status (${freshRes.status}) differs from duplicate status (${dupeRes.status})`,
+        );
+      }
+
+      // Must not return 409 (classic enumeration signal)
+      if (dupeRes.status === 409) {
+        throw new Error(
+          'email enumeration via sign-up: returning 409 Conflict reveals the email is registered',
+        );
+      }
+
+      // Response must have same top-level keys
+      const freshKeys = Object.keys(freshRes.body as Record<string, unknown>).sort().join(',');
+      const dupeKeys = Object.keys(dupeRes.body as Record<string, unknown>).sort().join(',');
+      if (freshKeys !== dupeKeys) {
+        throw new Error(
+          `email enumeration via sign-up: response keys differ — fresh [${freshKeys}] vs duplicate [${dupeKeys}]`,
+        );
+      }
+
+      // Must not contain leaky error messages
+      const body = dupeRes.body as Record<string, unknown>;
+      const allText = JSON.stringify(body).toLowerCase();
+      const leakyPatterns = [
+        'already registered', 'email already', 'user exists', 'account exists',
+        'already have an account', 'duplicate', 'conflict',
+      ];
+      for (const pattern of leakyPatterns) {
+        if (allText.includes(pattern)) {
+          throw new Error(
+            `email enumeration via sign-up: response contains leaky phrase "${pattern}"`,
+          );
+        }
+      }
+    },
+  },
+  {
+    name: 'sign-up duplicate token does not create a valid session',
     category: 'security',
     async fn(client) {
       const email = randomEmail();
       await client.signUp({ email, password: TEST_PASSWORD });
 
-      const res = await client.signUp({ email, password: TEST_PASSWORD });
-      assertStatus(res.status, 409, 'duplicate sign-up');
+      // Sign up again with the same email — should return a fake token
+      const dupeRes = await client.signUp({ email, password: TEST_PASSWORD });
+      const dupeBody = dupeRes.body as AuthResponse;
 
-      const body = res.body as Record<string, unknown>;
-      const errorMsg = typeof body.error === 'string' ? body.error.toLowerCase() : '';
-      const detailMsg = typeof body.detail === 'string' ? body.detail.toLowerCase() : '';
-      const msg = errorMsg + ' ' + detailMsg;
-
-      if (msg.includes(email.toLowerCase())) {
-        throw new Error(
-          `user data leak: sign-up error message contains the email address "${email}"`,
-        );
-      }
-
-      const leakyPatterns = ['user exists', 'account exists', 'already have an account'];
-      for (const pattern of leakyPatterns) {
-        if (msg.includes(pattern)) {
-          throw new Error(
-            `user data leak: sign-up error message contains leaky phrase "${pattern}"`,
-          );
-        }
-      }
+      // The fake token from the duplicate sign-up must NOT work as a session
+      const sessionRes = await client.getSession(dupeBody.token);
+      assertStatus(sessionRes.status, 401, 'duplicate sign-up token should not be a valid session');
     },
   },
 ];

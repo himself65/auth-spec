@@ -146,16 +146,7 @@ async fn sign_up(
         return error_json(StatusCode::BAD_REQUEST, "invalid email or password (min 8 chars)").into_response();
     }
 
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-        .bind(&req.email)
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(false);
-
-    if exists {
-        return error_json(StatusCode::CONFLICT, "email already registered").into_response();
-    }
-
+    // Always hash password to prevent timing-based email enumeration
     let password_hash = match hash_password(&req.password) {
         Ok(h) => h,
         Err(_) => return error_json(StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response(),
@@ -171,11 +162,24 @@ async fn sign_up(
         Err(_) => return error_json(StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response(),
     };
 
-    let _ = sqlx::query(
+    let insert_result = sqlx::query(
         "INSERT INTO users (id, email, name, email_verified, created_at, updated_at) VALUES ($1, $2, $3, false, $4, $4)"
     )
     .bind(&user_id).bind(&req.email).bind(&req.name).bind(now)
     .execute(&mut *tx).await;
+
+    if let Err(e) = insert_result {
+        // Unique constraint violation (duplicate email) — return fake success
+        // to prevent email enumeration. The dummy token won't resolve to a session.
+        let msg = e.to_string();
+        if msg.contains("unique") || msg.contains("duplicate") {
+            return Json(AuthResponse {
+                user: UserResponse { id: Uuid::new_v4().to_string(), email: req.email, name: req.name },
+                token: generate_token(),
+            }).into_response();
+        }
+        return error_json(StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+    }
 
     let _ = sqlx::query(
         "INSERT INTO accounts (id, user_id, provider_id, password_hash, created_at, updated_at) VALUES ($1, $2, 'credential', $3, $4, $4)"
@@ -193,10 +197,10 @@ async fn sign_up(
         return error_json(StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
     }
 
-    (StatusCode::CREATED, Json(AuthResponse {
+    Json(AuthResponse {
         user: UserResponse { id: user_id, email: req.email, name: req.name },
         token,
-    })).into_response()
+    }).into_response()
 }
 
 async fn sign_in(

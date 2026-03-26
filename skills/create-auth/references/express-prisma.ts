@@ -48,32 +48,43 @@ router.post("/sign-up", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Invalid email or password (min 8 chars)" });
   }
 
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    return res.status(409).json({ error: "Email already registered" });
-  }
-
+  // Always hash the password to prevent timing-based email enumeration
   const passwordHash = await bcrypt.hash(password, 12);
   const sessionToken = crypto.randomUUID();
 
-  const user = await prisma.user.create({
-    data: {
-      email,
-      name,
-      accounts: {
-        create: { providerId: "credential", passwordHash },
-      },
-      sessions: {
-        create: {
-          token: sessionToken,
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  try {
+    const user = await prisma.user.create({
+      data: {
+        email,
+        name,
+        accounts: {
+          create: { providerId: "credential", passwordHash },
+        },
+        sessions: {
+          create: {
+            token: sessionToken,
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          },
         },
       },
-    },
-    select: { id: true, email: true, name: true },
-  });
+      select: { id: true, email: true, name: true },
+    });
 
-  return res.status(201).json({ user, token: sessionToken });
+    return res.status(200).json({ user, token: sessionToken });
+  } catch (err: unknown) {
+    // Unique constraint violation (duplicate email) — return fake success
+    // to prevent email enumeration. The dummy token won't resolve to a session.
+    if (
+      err instanceof Error &&
+      (err.message.includes("Unique constraint") || err.message.includes("duplicate"))
+    ) {
+      return res.status(200).json({
+        user: { id: crypto.randomUUID(), email, name: name ?? null },
+        token: crypto.randomUUID(),
+      });
+    }
+    throw err;
+  }
 });
 
 router.post("/sign-in", async (req: Request, res: Response) => {
