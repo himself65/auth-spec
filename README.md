@@ -2,9 +2,25 @@
 
 A toolkit that helps you **build authentication from scratch** and **test that it works correctly**.
 
+## Installation
+
+### As a Claude Code plugin
+
+Add the marketplace and install the plugin:
+
 ```shell
-npx skills add himself65/auth-spec
+/plugin marketplace add himself65/auth-spec
+/plugin install auth@himself65-auth-spec
 ```
+
+Or test it locally by cloning the repo:
+
+```bash
+git clone https://github.com/himself65/auth-spec.git
+claude --plugin-dir ./auth-spec
+```
+
+After installing, run `/reload-plugins` to activate. Skills are namespaced under `auth:`, e.g. `/auth:create-auth`.
 
 ## What is this?
 
