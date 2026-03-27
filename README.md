@@ -1,6 +1,6 @@
 # auth-spec
 
-A toolkit that helps you **build authentication from scratch** and **test that it works correctly**.
+A toolkit that helps you **build authentication from scratch**.
 
 ## Installation
 
@@ -24,10 +24,7 @@ After installing, run `/reload-plugins` to activate. Skills are namespaced under
 
 ## What is this?
 
-When you build a web app, users need to sign up, sign in, and sign out. This project gives you two things:
-
-1. **A testing tool** that checks if your auth endpoints (sign-up, sign-in, session, sign-out) work correctly by sending real HTTP requests to your server
-2. **Claude Code skills** that can generate auth code for you as a starting point
+When you build a web app, users need to sign up, sign in, and sign out. This project provides **Claude Code skills** that can generate auth code for you as a starting point.
 
 ## Why build auth from scratch?
 
@@ -43,8 +40,6 @@ Writing auth yourself helps you understand how it actually works — password ha
 
 ```
 auth-spec/
-├── packages/
-│   └── auth-testing-library/        # The testing tool (npm package)
 └── skills/
     ├── create-auth/                 # Generates auth code for your project
     └── security-best-practice/      # Audits & hardens your auth security
@@ -70,23 +65,6 @@ pnpm install
 # 3. Build everything
 pnpm run build
 ```
-
-### Using the Testing Tool
-
-The testing library sends HTTP requests to your auth server and checks the responses. Point it at your running server to validate your auth endpoints:
-
-```bash
-# Run all tests against your server
-npx auth-testing-library --base-url http://localhost:3000
-```
-
-## Available Commands
-
-| Command | What it does |
-|---|---|
-| `pnpm run build` | Compiles all the code |
-| `pnpm run test` | Runs the test suite |
-| `pnpm run lint` | Checks for code errors |
 
 ## License
 
