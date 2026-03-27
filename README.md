@@ -47,7 +47,6 @@ auth-spec/
 │   └── auth-testing-library/        # The testing tool (npm package)
 └── skills/
     ├── create-auth/                 # Generates auth code for your project
-    ├── auth-review/                 # Reviews your auth implementation
     └── security-best-practice/      # Audits & hardens your auth security
 ```
 
