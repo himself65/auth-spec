@@ -207,6 +207,7 @@ Before generating code, read **all** files in `references/pitfalls/` and follow 
 | Sign-up catch must not re-throw | `references/pitfalls/signup-rethrow.md` |
 | Auth helpers must not throw | `references/pitfalls/auth-helpers-no-throw.md` |
 | Client must handle non-JSON | `references/pitfalls/client-json-parsing.md` |
+| OAuth redirect must not use request.url | `references/pitfalls/oauth-redirect-request-url.md` |
 
 ## Reference Implementations
 
