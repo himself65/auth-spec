@@ -24,7 +24,7 @@ After installing, run `/reload-plugins` to activate. Skills are namespaced under
 
 ## What is this?
 
-When you build a web app, users need to sign up, sign in, and sign out. This project provides **Claude Code skills** that can generate auth code for you as a starting point.
+When you build a web app, users need to sign up, sign in, and sign out. This project provides **Claude Code skills** that can generate auth code for you as a starting point. It works with **any language or framework** — TypeScript, Python, Go, Rust, Kotlin, and more.
 
 ## Why build auth from scratch?
 
