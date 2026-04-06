@@ -1,26 +1,26 @@
 # auth-spec
 
-A toolkit that helps you **build authentication from scratch**.
+A toolkit that helps you **build authentication from scratch**, following the [Agent Skills](https://agentskills.io) open standard.
 
-## Installation
+## Quick Start
 
-### As a Claude Code plugin
-
-Add the marketplace and install the plugin:
-
-```shell
-/plugin marketplace add himself65/auth-spec
-/plugin install auth@himself65-auth-spec
-```
-
-Or test it locally by cloning the repo:
+### Claude Code — Plugin (recommended)
 
 ```bash
-git clone https://github.com/himself65/auth-spec.git
-claude --plugin-dir ./auth-spec
+npx plugins add himself65/auth-spec
 ```
 
-After installing, run `/reload-plugins` to activate. Skills are namespaced under `auth:`, e.g. `/auth:create-auth`.
+### Claude Code — Individual Skills
+
+```bash
+npx skills add himself65/auth-spec
+```
+
+### Other Agents
+
+```bash
+npx skills add himself65/auth-spec -a <agent-name>
+```
 
 ## What is this?
 
@@ -36,35 +36,12 @@ This project follows a simple rule: **write your own auth code**. No plug-and-pl
 
 Writing auth yourself helps you understand how it actually works — password hashing, sessions, cookies, and security best practices.
 
-## Project Structure
+## Available Skills
 
-```
-auth-spec/
-└── skills/
-    ├── create-auth/                 # Generates auth code for your project
-    └── security-best-practice/      # Audits & hardens your auth security
-```
-
-## Getting Started
-
-### Prerequisites
-
-- **Node.js** version 18 or higher (we recommend version 22 — see `.nvmrc`)
-- **pnpm** package manager — if you don't have it, install with `npm install -g pnpm`
-
-### Setup
-
-```bash
-# 1. Clone the repo
-git clone <repo-url>
-cd auth-spec
-
-# 2. Install dependencies
-pnpm install
-
-# 3. Build everything
-pnpm run build
-```
+| Skill | Description | Platform |
+|---|---|---|
+| [create-auth](skills/create-auth/) | Scaffold sign-up, sign-in, session, and sign-out endpoints with security best practices | All |
+| [security-best-practice](skills/security-best-practice/) | Audit and harden your auth code against OWASP top 10 and common security pitfalls | All |
 
 ## License
 
