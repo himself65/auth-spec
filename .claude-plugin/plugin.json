@@ -1,6 +1,6 @@
 {
   "name": "auth",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Auth skills for Claude Code — scaffold auth endpoints, review auth code for security issues, and add conformance tests",
   "author": {
     "name": "himself65"
@@ -8,5 +8,10 @@
   "homepage": "https://github.com/himself65/auth-spec",
   "repository": "https://github.com/himself65/auth-spec",
   "license": "MIT",
-  "keywords": ["auth", "authentication", "security", "testing"]
+  "keywords": [
+    "auth",
+    "authentication",
+    "security",
+    "testing"
+  ]
 }
