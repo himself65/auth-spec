@@ -72,7 +72,7 @@ Ask "Which security features do you want?" with header "Security". Set multiSele
 - **Two-Factor Auth (Recommended)** — "TOTP-based second factor with backup codes"
 - **Captcha** — "Bot protection on sign-up and sign-in (reCAPTCHA, hCaptcha, Turnstile)"
 - **Password Breach Check** — "Check passwords against the Have I Been Pwned database"
-- **Rate Limiting** — "Throttle auth endpoints to prevent brute-force attacks"
+- **Rate Limiting** — "Throttle auth endpoints to prevent brute-force attacks (includes KV cache)"
 
 ### Question 3: Additional Capabilities
 
@@ -91,6 +91,8 @@ Ask "Any additional capabilities?" with header "Extras". Set multiSelect to true
 
 Generate the core auth (schema + endpoints below) **plus** any selected features. For each selected feature, read the matching reference file from `references/features/` to get the schema additions, endpoint specs, and implementation details.
 
+**Dependency:** If the user selects **Rate Limiting**, also read `references/features/kv-cache.md` and generate the KV cache module first — rate limiting depends on it. The KV cache is a general-purpose utility that other features can also use, so generate it as a standalone module.
+
 | Feature             | Reference file                          |
 |---------------------|-----------------------------------------|
 | Email OTP           | `references/features/email-otp.md`      |
@@ -101,6 +103,7 @@ Generate the core auth (schema + endpoints below) **plus** any selected features
 | Captcha             | `references/features/captcha.md`        |
 | Password Breach     | `references/features/password-breach.md` |
 | Rate Limiting       | `references/features/rate-limiting.md`  |
+| KV Cache            | `references/features/kv-cache.md`       |
 | Multi-Session       | `references/features/multi-session.md`  |
 | Username Auth       | `references/features/username.md`       |
 | Organization/Teams  | `references/features/organization.md`   |
