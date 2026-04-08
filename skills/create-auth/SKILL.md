@@ -93,27 +93,28 @@ Generate the core auth (schema + endpoints below) **plus** any selected features
 
 **Dependency:** If the user selects **Rate Limiting**, also read `references/features/kv-cache.md` and generate the KV cache module first — rate limiting depends on it. The KV cache is a general-purpose utility that other features can also use, so generate it as a standalone module.
 
-| Feature             | Reference file                          |
-|---------------------|-----------------------------------------|
-| Email OTP           | `references/features/email-otp.md`      |
-| Magic Link          | `references/features/magic-link.md`     |
-| Phone Number        | `references/features/phone-number.md`   |
-| Passkey             | `references/features/passkey.md`        |
-| Two-Factor Auth     | `references/features/two-factor.md`     |
-| Captcha             | `references/features/captcha.md`        |
-| Password Breach     | `references/features/password-breach.md` |
-| Rate Limiting       | `references/features/rate-limiting.md`  |
-| KV Cache            | `references/features/kv-cache.md`       |
-| Multi-Session       | `references/features/multi-session.md`  |
-| Username Auth       | `references/features/username.md`       |
-| Organization/Teams  | `references/features/organization.md`   |
-| API Keys            | `references/features/api-key.md`        |
+| Feature            | Reference file                           |
+| ------------------ | ---------------------------------------- |
+| Email OTP          | `references/features/email-otp.md`       |
+| Magic Link         | `references/features/magic-link.md`      |
+| Phone Number       | `references/features/phone-number.md`    |
+| Passkey            | `references/features/passkey.md`         |
+| Two-Factor Auth    | `references/features/two-factor.md`      |
+| Captcha            | `references/features/captcha.md`         |
+| Password Breach    | `references/features/password-breach.md` |
+| Rate Limiting      | `references/features/rate-limiting.md`   |
+| KV Cache           | `references/features/kv-cache.md`        |
+| Multi-Session      | `references/features/multi-session.md`   |
+| Username Auth      | `references/features/username.md`        |
+| Organization/Teams | `references/features/organization.md`    |
+| API Keys           | `references/features/api-key.md`         |
 
 ### Core Schema and Endpoints
 
 Generate the following core auth using the schema and endpoint specs below.
 
 **Adapt everything to the user's language/framework idioms:**
+
 - Naming: `email_verified` (snake_case) in Python/Go/Rust, `emailVerified` (camelCase) in JS/TS, `EmailVerified` (PascalCase) in C#
 - Types: use the language's native types (e.g. `std::string` in C++, `String` in Rust/Java, `string` in Go/TS)
 - IDs: use idiomatic generation — `uuid.New()` (Go), `Uuid::new_v4()` (Rust), `crypto.randomUUID()` (JS), `uuid4()` (Python), `boost::uuids::random_generator()` (C++), etc.
@@ -126,37 +127,38 @@ Generate the following core auth using the schema and endpoint specs below.
 Create these tables/models:
 
 **User**
-| Field          | Type     | Constraints          |
+| Field | Type | Constraints |
 |----------------|----------|----------------------|
-| id             | string   | primary key          |
-| email          | string   | unique, not null     |
-| name           | string   | nullable             |
-| emailVerified  | boolean  | default false        |
-| createdAt      | datetime | default now          |
-| updatedAt      | datetime | auto-update          |
+| id | string | primary key |
+| email | string | unique, not null |
+| name | string | nullable |
+| emailVerified | boolean | default false |
+| createdAt | datetime | default now |
+| updatedAt | datetime | auto-update |
 
 **Session**
-| Field     | Type     | Constraints              |
+| Field | Type | Constraints |
 |-----------|----------|--------------------------|
-| id        | string   | primary key              |
-| userId    | string   | foreign key -> User, not null |
-| token     | string   | unique, not null         |
-| expiresAt | datetime | not null                 |
-| createdAt | datetime | default now              |
+| id | string | primary key |
+| userId | string | foreign key -> User, not null |
+| token | string | unique, not null |
+| expiresAt | datetime | not null |
+| createdAt | datetime | default now |
 
 **Account**
-| Field        | Type     | Constraints              |
+| Field | Type | Constraints |
 |--------------|----------|--------------------------|
-| id           | string   | primary key              |
-| userId       | string   | foreign key -> User, not null |
-| providerId   | string   | not null (e.g. "credential") |
-| passwordHash | string   | nullable                 |
-| createdAt    | datetime | default now              |
-| updatedAt    | datetime | auto-update              |
+| id | string | primary key |
+| userId | string | foreign key -> User, not null |
+| providerId | string | not null (e.g. "credential") |
+| passwordHash | string | nullable |
+| createdAt | datetime | default now |
+| updatedAt | datetime | auto-update |
 
 ### Endpoints
 
 **POST /api/auth/sign-up**
+
 - Body: `{ email, password, name? }`
 - Validate email format and password length (min 8 chars)
 - Hash password with a strong algorithm (bcrypt, argon2, or scrypt — use whichever is idiomatic for the language)
@@ -165,6 +167,7 @@ Create these tables/models:
 - **Email enumeration protection:** If the email already exists, return the same `200 OK` status and same response shape as a successful sign-up — do not return 409 or any error that reveals the email is taken. The response should be indistinguishable from a real sign-up. Implementation: attempt the insert, catch the unique constraint violation, hash the password anyway (to keep timing consistent), and return a fake success with a dummy user ID and token (that won't actually work as a session). This prevents attackers from discovering which emails are registered via the sign-up endpoint.
 
 **POST /api/auth/sign-in**
+
 - Body: `{ email, password }`
 - Look up user by email, verify password hash
 - Create new Session
@@ -172,11 +175,13 @@ Create these tables/models:
 - Return 401 on invalid credentials (generic message, no user enumeration)
 
 **GET /api/auth/session**
+
 - Read session token from Authorization header (Bearer) or cookie
 - Look up session, verify not expired
 - Return user info if valid, 401 if not
 
 **POST /api/auth/sign-out**
+
 - Read session token
 - Delete session from database
 - Return 200
@@ -204,25 +209,26 @@ For JS/TS projects using `@neondatabase/serverless`, the tagged-template `sql` f
 
 Before generating code, read **all** files in `references/pitfalls/` and follow their rules strictly. These are real bugs encountered in production.
 
-| Pitfall | Reference file |
-|---------|---------------|
-| API routes must catch DB errors | `references/pitfalls/api-error-handling.md` |
-| Sign-up catch must not re-throw | `references/pitfalls/signup-rethrow.md` |
-| Auth helpers must not throw | `references/pitfalls/auth-helpers-no-throw.md` |
-| Client must handle non-JSON | `references/pitfalls/client-json-parsing.md` |
+| Pitfall                                 | Reference file                                      |
+| --------------------------------------- | --------------------------------------------------- |
+| API routes must catch DB errors         | `references/pitfalls/api-error-handling.md`         |
+| Sign-up catch must not re-throw         | `references/pitfalls/signup-rethrow.md`             |
+| Auth helpers must not throw             | `references/pitfalls/auth-helpers-no-throw.md`      |
+| Client must handle non-JSON             | `references/pitfalls/client-json-parsing.md`        |
 | OAuth redirect must not use request.url | `references/pitfalls/oauth-redirect-request-url.md` |
+| API key hash/gen must not be duplicated | `references/pitfalls/api-key-shared-utils.md`       |
 
 ## Reference Implementations
 
 Full working examples are in the `references/` directory alongside this skill. Use the matching reference as a starting point and adapt to the user's specific setup:
 
-| File                   | Stack                                    |
-|------------------------|------------------------------------------|
-| `nextjs-drizzle.ts`    | Next.js App Router + Drizzle + PostgreSQL |
-| `express-prisma.ts`    | Express + Prisma + PostgreSQL            |
-| `go-chi.go`            | Go + Chi + database/sql + PostgreSQL     |
-| `fastapi-sqlalchemy.py`| FastAPI + SQLAlchemy + PostgreSQL         |
-| `axum-sqlx.rs`         | Rust + Axum + sqlx + PostgreSQL          |
-| `spring-boot.kt`       | Kotlin + Spring Boot + JPA + PostgreSQL  |
+| File                    | Stack                                     |
+| ----------------------- | ----------------------------------------- |
+| `nextjs-drizzle.ts`     | Next.js App Router + Drizzle + PostgreSQL |
+| `express-prisma.ts`     | Express + Prisma + PostgreSQL             |
+| `go-chi.go`             | Go + Chi + database/sql + PostgreSQL      |
+| `fastapi-sqlalchemy.py` | FastAPI + SQLAlchemy + PostgreSQL         |
+| `axum-sqlx.rs`          | Rust + Axum + sqlx + PostgreSQL           |
+| `spring-boot.kt`        | Kotlin + Spring Boot + JPA + PostgreSQL   |
 
 If the user's stack doesn't match any reference, use the closest one as a structural guide and adapt idioms accordingly.
