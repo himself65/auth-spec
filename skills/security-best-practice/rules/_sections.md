@@ -5,28 +5,37 @@ Defines the organization and priority of security best practice rules.
 ## Critical Impact
 
 1. **Credential Storage** (`credential-`)
-   Rules for password hashing, secret management, and key handling.
+   Password hashing, secret management, breached-password checks, key rotation.
 
 2. **Error Handling & Information Leakage** (`error-`)
-   Rules for preventing user enumeration, timing attacks, and stack trace leaks.
+   User enumeration, timing attacks, response-size/status symmetry, stack-trace leaks.
 
 ## High Impact
 
 3. **Session Security** (`session-`)
-   Rules for token generation, cookie flags, session lifecycle, and fixation prevention.
+   Token generation, cookie flags (`__Host-`, `Partitioned`), session lifecycle, fixation prevention, JWT pitfalls.
 
 4. **Input Validation** (`input-`)
-   Rules for SQL injection, XSS, header injection, and request body validation.
+   SQL/NoSQL injection, XSS, header injection, SSRF, open redirect, request body schema.
+
+5. **OAuth 2.0 / OIDC** (`oauth-`)
+   Authorization Code + PKCE, `state`/`nonce`, redirect-URI allow-listing, account-linking pre-takeover defense.
+
+6. **MFA, TOTP, Passkeys / WebAuthn** (`mfa-`)
+   Factor enrollment, recovery codes, step-up, passkey verification, TOTP replay prevention.
+
+7. **Short-Lived Token Lifecycle** (`token-`)
+   Password reset, email verification / change, magic link, OTP — hashing, one-time use, sibling invalidation.
 
 ## Medium Impact
 
-5. **Rate Limiting & Brute-Force Protection** (`rate-limiting-`)
-   Rules for login throttling, account lockout, and CAPTCHA triggers.
+8. **Rate Limiting & Brute-Force Protection** (`rate-limiting-`)
+   Multi-dimensional throttling (account + IP), SMS pumping, credential stuffing, CAPTCHA placement.
 
-6. **CSRF Protection** (`csrf-`)
-   Rules for cross-site request forgery prevention with cookie-based auth.
+9. **CSRF Protection** (`csrf-`)
+   Origin / Fetch-Metadata checks, double-submit token, `SameSite` caveats, CORS pitfalls.
 
 ## Lower Priority
 
-7. **HTTP Security Headers** (`http-headers-`)
-   Rules for HSTS, CSP, X-Frame-Options, Referrer-Policy, and Permissions-Policy.
+10. **HTTP Security Headers** (`http-headers-`)
+    HSTS, CSP (nonce), COOP/COEP/CORP, `Clear-Site-Data` on logout, Trusted Types.
