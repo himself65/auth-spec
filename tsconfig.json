@@ -12,8 +12,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "references": [
-    { "path": "packages/auth-testing-library" }
-  ],
   "files": []
 }
