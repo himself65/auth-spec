@@ -82,6 +82,7 @@ Ask "Any additional capabilities?" with header "Extras". Set multiSelect to true
 - **Username Auth** — "Sign in with username instead of (or in addition to) email"
 - **Organization / Teams** — "Multi-tenant support with roles, invitations, and RBAC"
 - **API Keys** — "Generate API keys for programmatic access"
+- **MCP Server** — "OAuth 2.1 + discovery endpoints so Model Context Protocol clients (Claude Desktop, mcp-inspector, Cursor) can authenticate. If selected, ask a follow-up: Resource Server only (delegate to an existing IdP) vs Self-hosted Authorization Server (issue your own tokens). See `references/features/mcp-server.md` for the two modes."
 
 ## Step 4: Wait for All Answers
 
@@ -91,7 +92,10 @@ Ask "Any additional capabilities?" with header "Extras". Set multiSelect to true
 
 Generate the core auth (schema + endpoints below) **plus** any selected features. For each selected feature, read the matching reference file from `references/features/` to get the schema additions, endpoint specs, and implementation details.
 
-**Dependency:** If the user selects **Rate Limiting**, also read `references/features/kv-cache.md` and generate the KV cache module first — rate limiting depends on it. The KV cache is a general-purpose utility that other features can also use, so generate it as a standalone module.
+**Dependencies:**
+
+- If the user selects **Rate Limiting**, also read `references/features/kv-cache.md` and generate the KV cache module first — rate limiting depends on it. The KV cache is a general-purpose utility that other features can also use, so generate it as a standalone module.
+- If the user selects **MCP Server** in Mode B (Self-hosted Authorization Server), strongly recommend turning on **Rate Limiting** as well — the public `/oauth/register`, `/oauth/authorize`, and `/oauth/token` endpoints need it. Confirm with the user before generating; if they decline, leave a TODO comment at each endpoint pointing at the rate-limiting feature.
 
 | Feature            | Reference file                           |
 | ------------------ | ---------------------------------------- |
@@ -108,6 +112,7 @@ Generate the core auth (schema + endpoints below) **plus** any selected features
 | Username Auth      | `references/features/username.md`        |
 | Organization/Teams | `references/features/organization.md`    |
 | API Keys           | `references/features/api-key.md`         |
+| MCP Server         | `references/features/mcp-server.md`      |
 
 ### Core Schema and Endpoints
 
@@ -217,6 +222,10 @@ Before generating code, read **all** files in `references/pitfalls/` and follow 
 | Client must handle non-JSON             | `references/pitfalls/client-json-parsing.md`        |
 | OAuth redirect must not use request.url | `references/pitfalls/oauth-redirect-request-url.md` |
 | API key hash/gen must not be duplicated | `references/pitfalls/api-key-shared-utils.md`       |
+| MCP tokens must be audience-bound       | `references/pitfalls/mcp-token-audience.md`         |
+| MCP must not pass tokens upstream       | `references/pitfalls/mcp-token-passthrough.md`      |
+| MCP 401 needs `resource_metadata`       | `references/pitfalls/mcp-www-authenticate.md`       |
+| MCP `.well-known` must mount at root    | `references/pitfalls/mcp-discovery-mounting.md`     |
 
 ## Reference Implementations
 
