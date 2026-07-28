@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type User struct {
 	ID            string    `json:"id"`
 	Email         string    `json:"email"`
 	Name          *string   `json:"name,omitempty"`
+	Image         *string   `json:"image,omitempty"`
 	EmailVerified bool      `json:"email_verified"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
@@ -33,13 +35,17 @@ type Session struct {
 	UserID    string    `json:"user_id"`
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
+	IPAddress *string   `json:"ip_address,omitempty"`
+	UserAgent *string   `json:"user_agent,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Account rows are unique on (provider_id, account_id).
 type Account struct {
 	ID           string    `json:"id"`
 	UserID       string    `json:"user_id"`
 	ProviderID   string    `json:"provider_id"`
+	AccountID    string    `json:"account_id"`
 	PasswordHash *string   `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -93,6 +99,16 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
+// clientIP returns the request's remote IP with the port stripped.
+// When deployed behind a trusted proxy, use the X-Forwarded-For header instead.
+func clientIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
 const sessionDuration = 7 * 24 * time.Hour
 
 func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +117,9 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+
+	// Normalize email before validation and storage
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
 	if req.Email == "" || len(req.Password) < 8 {
 		http.Error(w, `{"error":"invalid email or password (min 8 chars)"}`, http.StatusBadRequest)
@@ -146,8 +165,9 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hashStr := string(hash)
+	// For the credential provider, account_id is the new user's id ($2)
 	_, err = tx.ExecContext(r.Context(),
-		"INSERT INTO accounts (id, user_id, provider_id, password_hash, created_at, updated_at) VALUES ($1, $2, 'credential', $3, $4, $4)",
+		"INSERT INTO accounts (id, user_id, provider_id, account_id, password_hash, created_at, updated_at) VALUES ($1, $2, 'credential', $2, $3, $4, $4)",
 		uuid.New().String(), userID, hashStr, now,
 	)
 	if err != nil {
@@ -156,8 +176,8 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = tx.ExecContext(r.Context(),
-		"INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)",
-		uuid.New().String(), userID, token, now.Add(sessionDuration), now,
+		"INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+		uuid.New().String(), userID, token, now.Add(sessionDuration), clientIP(r), r.UserAgent(), now,
 	)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
@@ -184,13 +204,16 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize email before lookup
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
 	var user User
 	var passwordHash sql.NullString
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT u.id, u.email, u.name, u.email_verified, u.created_at, u.updated_at, a.password_hash
+		`SELECT u.id, u.email, u.name, u.image, u.email_verified, u.created_at, u.updated_at, a.password_hash
 		 FROM users u JOIN accounts a ON a.user_id = u.id
 		 WHERE u.email = $1 AND a.provider_id = 'credential'`, req.Email,
-	).Scan(&user.ID, &user.Email, &user.Name, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt, &passwordHash)
+	).Scan(&user.ID, &user.Email, &user.Name, &user.Image, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt, &passwordHash)
 	if err != nil {
 		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 		return
@@ -204,8 +227,8 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	token := generateToken()
 	now := time.Now()
 	_, err = h.db.ExecContext(r.Context(),
-		"INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)",
-		uuid.New().String(), user.ID, token, now.Add(sessionDuration), now,
+		"INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+		uuid.New().String(), user.ID, token, now.Add(sessionDuration), clientIP(r), r.UserAgent(), now,
 	)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
@@ -226,10 +249,10 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	var user User
 	var expiresAt time.Time
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT u.id, u.email, u.name, u.email_verified, u.created_at, u.updated_at, s.expires_at
+		`SELECT u.id, u.email, u.name, u.image, u.email_verified, u.created_at, u.updated_at, s.expires_at
 		 FROM sessions s JOIN users u ON u.id = s.user_id
 		 WHERE s.token = $1`, token,
-	).Scan(&user.ID, &user.Email, &user.Name, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt, &expiresAt)
+	).Scan(&user.ID, &user.Email, &user.Name, &user.Image, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt, &expiresAt)
 	if err != nil || expiresAt.Before(time.Now()) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return

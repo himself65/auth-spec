@@ -41,28 +41,28 @@ TOTP-based second factor with backup codes.
 
 **POST /api/auth/two-factor/challenge**
 - Called during sign-in when 2FA is enabled
-- Body: `{ code, trustDevice? }` plus session token from initial sign-in
+- Body: `{ code, trustDevice? }` plus the challenge token from initial sign-in
 - Verify TOTP code OR backup code
-- If backup code used: remove it from the list (single use)
-- If valid: upgrade session to fully authenticated, return token + user
+- If backup code used: remove exactly that code from the stored list (single use) — rewrite the remaining entries unchanged, in the same hashed format enrollment stored them in
+- If valid: **consume the challenge session atomically** (conditional write gated on affected rows — concurrent verifies must mint at most one session, see `references/pitfalls/single-use-token-race.md`), create a **new** fully-authenticated Session, and return the new token + user. Create the new session before deleting the challenge row so a crash between the two steps can't leave the client with no valid credential
 - If invalid: return 401
 
 ## Sign-In Flow Changes
 
 When a user with 2FA enabled signs in:
 1. Verify email + password as normal
-2. Create a session but mark it as `twoFactorVerified: false`
+2. Create a **short-lived challenge session** marked `twoFactorVerified: false` (expiry ≤ 5 minutes — not the normal session TTL)
 3. Return `{ twoFactorRequired: true, token }` (token for the challenge step only)
 4. Client must call `/two-factor/challenge` with a TOTP code to complete sign-in
-5. Only after challenge is the session fully authenticated
+5. On success the challenge session is consumed and **replaced** by a fresh fully-authenticated session with a new token — never upgrade the challenge token in place (rotate on the privilege boundary)
 
 Add to **Session** table:
 | Field              | Type    | Constraints    |
 |--------------------|---------|----------------|
 | twoFactorVerified  | boolean | default true   |
 
-Set `twoFactorVerified = false` on sign-in for 2FA users; set to `true` after challenge.
-The session endpoint must reject sessions where `twoFactorVerified = false`.
+Set `twoFactorVerified = false` on sign-in for 2FA users; the replacement session created by the challenge has `twoFactorVerified = true`.
+Every endpoint except `/two-factor/challenge` must reject sessions where `twoFactorVerified = false`, and an expired challenge session must fail closed — it can never complete sign-in.
 
 ## Implementation Rules
 
@@ -71,8 +71,10 @@ The session endpoint must reject sessions where `twoFactorVerified = false`.
 - Allow ±1 time step window to account for clock drift
 - Encrypt the TOTP secret at rest (use the app's encryption key)
 - Backup codes: generate 10, hash with bcrypt before storing, each is single-use
+- When a backup code is consumed, remove just that entry and leave the rest byte-for-byte untouched — never re-hash or re-encode the remaining codes
 - Never expose the TOTP secret after initial setup
 - The enable flow is: generate → user scans QR → user enters code to verify → enabled
+- Gate the sign-in 2FA requirement on `enabled = true` — never on the mere existence of a TwoFactor row. An abandoned enrollment (secret stored, never verified) must not lock the user out
 
 ## Best Practices (Industry Consensus)
 

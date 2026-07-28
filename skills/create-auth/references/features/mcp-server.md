@@ -201,7 +201,7 @@ The `resource_metadata` parameter is what lets MCP clients discover the authoriz
   }
   ```
 - **Validation rules:**
-  - `redirect_uris` MUST be present, non-empty. Each entry must use HTTPS, or be a loopback URI (`http://127.0.0.1[:port]/…` or `http://localhost[:port]/…` — never `http://0.0.0.0` and never a LAN IP), or a custom scheme containing `.` (reverse-DNS style, e.g. `com.example.app:/oauth`).
+  - `redirect_uris` MUST be present, non-empty. Each entry must use HTTPS, or be a loopback URI (`http://127.0.0.1[:port]/…` or `http://localhost[:port]/…` — never `http://0.0.0.0` and never a LAN IP), or a custom scheme containing `.` (reverse-DNS style, e.g. `com.example.app:/oauth`). Reject dangerous schemes outright (`javascript:`, `data:`, `vbscript:`) and any entry containing a fragment (`#…`) — RFC 6749 §3.1.2 forbids fragments in redirect URIs.
   - `application_type` SHOULD be respected (`native` for desktop/CLI/loopback, `web` otherwise). Reject mismatches — a `web` client requesting a loopback redirect URI is suspicious, a `native` client requesting `https://` to a public host is suspicious. The OIDC dynamic-registration spec ties redirect URI shape to `application_type`; following the rule avoids surprises.
   - If `token_endpoint_auth_method` is `none` (public client — the common case for desktop MCP clients), do not issue a `client_secret`. Public clients authenticate solely via PKCE.
   - Reject unknown `grant_types`. Only `authorization_code` and `refresh_token` are allowed.
@@ -235,10 +235,11 @@ The `resource_metadata` parameter is what lets MCP clients discover the authoriz
 Authorization Code grant:
 
 - Body (form-encoded): `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`.
+- Verify the presented `grant_type` is in the client's registered `grantTypes` — a client registered only for `authorization_code` must not obtain tokens through any other grant.
 - Look up the code. **Atomically** mark it consumed (set `consumedAt`) — if it was already consumed, revoke any tokens issued from it and return `invalid_grant`. The code is single-use.
 - Verify the code is not expired and that `clientId`, `redirectUri` match what was stored.
 - Verify PKCE: `BASE64URL(SHA256(code_verifier)) == codeChallenge`.
-- If the client is confidential, also verify `client_secret` via Basic auth.
+- If the client is confidential, also verify `client_secret` via Basic auth — compare `SHA256(presented_secret)` to `clientSecretHash` with a constant-time comparison.
 - Issue an `OAuthAccessToken` (15–60 min TTL) and `OAuthRefreshToken` (longer, e.g. 30 days). Both store SHA-256 hashes — never the plaintext.
 - Stamp `resource` from the authorization code onto both tokens.
 - Response:
@@ -255,6 +256,7 @@ Authorization Code grant:
 Refresh Token grant:
 
 - Body: `grant_type=refresh_token`, `refresh_token`, `client_id`, optional `scope` (must be subset of original), optional `resource`.
+- Verify `refresh_token` is in the client's registered `grantTypes`, and authenticate confidential clients here exactly as on the code exchange (constant-time compare against `clientSecretHash`) — a stolen refresh token alone must not be enough to act as a confidential client.
 - **Rotate** the refresh token: mark the old one consumed, issue a new one, store `replacedById`. If a consumed refresh token is presented again, revoke the entire token family (the chain rooted at the original code) — this signals replay/theft.
 - `resource` of the new access token MUST equal the original resource. Do not allow audience downgrade/upgrade on refresh.
 

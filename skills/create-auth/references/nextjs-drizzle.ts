@@ -2,12 +2,13 @@
 // This shows the complete auth implementation pattern for Next.js.
 
 // --- schema.ts ---
-import { pgTable, text, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, timestamp, unique } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").unique().notNull(),
   name: text("name"),
+  image: text("image"),
   emailVerified: boolean("email_verified").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -20,6 +21,8 @@ export const sessions = pgTable("sessions", {
     .notNull(),
   token: text("token").unique().notNull(),
   expiresAt: timestamp("expires_at").notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -29,10 +32,11 @@ export const accounts = pgTable("accounts", {
     .references(() => users.id)
     .notNull(),
   providerId: text("provider_id").notNull(),
+  accountId: text("account_id").notNull(),
   passwordHash: text("password_hash"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [unique().on(table.providerId, table.accountId)]);
 
 // --- app/api/auth/sign-up/route.ts ---
 import { db } from "@/lib/db";
@@ -42,7 +46,9 @@ import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
-  const { email, password, name } = await request.json();
+  const { email: rawEmail, password, name } = await request.json();
+  // Normalize email so lookups and the unique constraint are case-insensitive
+  const email = rawEmail?.trim().toLowerCase();
 
   if (!email || !password || password.length < 8) {
     return NextResponse.json(
@@ -55,6 +61,10 @@ export async function POST(request: Request) {
   const userId = crypto.randomUUID();
   const sessionToken = crypto.randomUUID();
   const passwordHash = await hash(password, 12);
+  const userAgent = request.headers.get("user-agent");
+  // x-forwarded-for is only trustworthy behind a proxy you control
+  const ipAddress =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
 
   try {
     await db.transaction(async (tx) => {
@@ -67,6 +77,7 @@ export async function POST(request: Request) {
         id: crypto.randomUUID(),
         userId,
         providerId: "credential",
+        accountId: userId,
         passwordHash,
       });
       await tx.insert(sessions).values({
@@ -74,6 +85,8 @@ export async function POST(request: Request) {
         userId,
         token: sessionToken,
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        ipAddress,
+        userAgent,
       });
     });
   } catch (err: unknown) {
@@ -101,7 +114,9 @@ export async function POST(request: Request) {
 import { compare } from "bcryptjs";
 
 export async function POST(request: Request) {
-  const { email, password } = await request.json();
+  const { email: rawEmail, password } = await request.json();
+  // Normalize email the same way sign-up does before the lookup
+  const email = rawEmail?.trim().toLowerCase();
 
   const user = await db
     .select()
@@ -138,11 +153,17 @@ export async function POST(request: Request) {
   }
 
   const sessionToken = crypto.randomUUID();
+  const userAgent = request.headers.get("user-agent");
+  // x-forwarded-for is only trustworthy behind a proxy you control
+  const ipAddress =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   await db.insert(sessions).values({
     id: crypto.randomUUID(),
     userId: user[0].id,
     token: sessionToken,
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    ipAddress,
+    userAgent,
   });
 
   return NextResponse.json({

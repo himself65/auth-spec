@@ -8,7 +8,7 @@ tags: email-verification, password-reset, magic-link, otp, invitation, token, on
 
 **Impact: HIGH**
 
-Email-verification links, password-reset links, magic links, OTPs, and invitation tokens are all variants of the same primitive: a server-issued token a user presents to perform an action. Getting any of them wrong turns "forgot my password" into "take over any account".
+Email-verification links, password-reset links, magic links, OTPs, invitation tokens, and 2FA sign-in challenges are all variants of the same primitive: a server-issued token a user presents to perform an action. Getting any of them wrong turns "forgot my password" into "take over any account".
 
 ### Checklist — Common
 
@@ -16,7 +16,7 @@ Email-verification links, password-reset links, magic links, OTPs, and invitatio
 |-------|------------|
 | Generation | Cryptographically random, ≥ 128 bits entropy (32 hex / 22 base64url). For numeric OTP: 6–8 digits. Never time-derived, sequential, or predictable. |
 | Storage | Store a **hash** of the token (SHA-256) server-side, not the raw token. Compare using constant-time equality. A DB dump must not yield reusable tokens. |
-| One-time use | Mark consumed on first successful use. Subsequent attempts fail even within the TTL. |
+| One-time use | Mark consumed on first successful use — **atomically**. Use a single conditional write (`UPDATE … WHERE token_hash = ? AND consumed_at IS NULL`, or `DELETE … RETURNING`) and proceed only when exactly one row changed. A find-then-update sequence is a race: concurrent requests both pass the check and the token is consumed twice (two sessions from one magic link, one reset link changing the password twice). Subsequent attempts fail even within the TTL. |
 | Short TTL | Reset: ≤ 30 min. Email verification: ≤ 24 h. Magic link: ≤ 15 min. OTP: ≤ 10 min (shorter is better). Invitations: ≤ 7 days. Enforce server-side — don't trust a JWT `exp`. |
 | Scope binding | Token stores the `userId` (and `action` — "reset", "verify", "invite"). Reject cross-type use (a "verify" token cannot complete a reset). |
 | Invalidate on state change | Password change / MFA change / email change must invalidate **all** outstanding tokens for that user. |
@@ -102,12 +102,17 @@ async function issueReset(email) {
 
 async function confirmReset(raw, newPassword) {
   const hash = crypto.createHash('sha256').update(raw).digest('hex');
+  // Atomic consume: one conditional write, gated on the row count. A
+  // find-then-update sequence lets two concurrent requests both pass the
+  // check and redeem the same token twice.
+  const consumed = await db.resetToken.updateMany({
+    where: { tokenHash: hash, consumedAt: null, expiresAt: { gt: new Date() } },
+    data: { consumedAt: new Date() },
+  });
+  if (consumed.count !== 1) throw new HttpError(400, 'Invalid or expired link');
+
   const row = await db.resetToken.findUnique({ where: { tokenHash: hash } });
-  if (!row || row.consumedAt || row.expiresAt < new Date()) {
-    throw new HttpError(400, 'Invalid or expired link');
-  }
   await db.$transaction([
-    db.resetToken.update({ where: { id: row.id }, data: { consumedAt: new Date() } }),
     db.user.update({ where: { id: row.userId }, data: { passwordHash: await hashPassword(newPassword) } }),
     db.session.deleteMany({ where: { userId: row.userId } }),
     db.resetToken.deleteMany({ where: { userId: row.userId, consumedAt: null } }),

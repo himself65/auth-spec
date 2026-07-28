@@ -20,6 +20,7 @@ If the app uses cookie-based authentication, CSRF allows attackers to perform ac
 | CSRF token (primary defense) | For state-changing requests: synchronizer token or double-submit cookie. Token should be 128+ bits of entropy, bound to the session, and rotated on privilege change. |
 | Origin/Referer (defense-in-depth) | On every unsafe-method request, require `Origin` (or `Referer` fallback) to equal an allow-list of your own origins. Reject with 403 otherwise. |
 | `Sec-Fetch-Site` / Fetch Metadata | Modern browsers send `Sec-Fetch-Site`. Reject state-changing requests when `Sec-Fetch-Site` is `cross-site` unless the route is a whitelisted webhook. |
+| Pre-session endpoints (no cookie yet) | Sign-up, sign-in, password-reset request, and OTP/magic-link send run before any session cookie exists — apply the Origin/Fetch-Metadata checks there anyway (login CSRF is real). When `Origin` and `Referer` are both absent, fall back to `Sec-Fetch-Site`: reject `cross-site` even when `Sec-Fetch-Mode` is `navigate` — a cross-site top-level form POST is exactly login CSRF. Requests with none of these headers (curl, native apps, very old browsers) pass the header gate — require `Content-Type: application/json` as the final backstop so plain HTML forms can't reach the handler at all. |
 | CORS ≠ CSRF protection | A permissive CORS config (`Access-Control-Allow-Origin: *` with credentials, or reflecting `Origin`) **enables** CSRF. Never reflect origin for authenticated endpoints; use an explicit allow-list. |
 | Authorization header auth | Bearer tokens in `Authorization` header are **not** auto-attached by the browser, so CSRF is not required — but ensure no cookie-based fallback exists on the same endpoint. |
 | Login CSRF | The login endpoint also needs CSRF protection (otherwise an attacker can log the victim into the attacker's account to harvest behavior). Use a pre-session cookie + token. |
@@ -70,6 +71,30 @@ function csrfProtection(req, res, next) {
       !crypto.timingSafeEqual(Buffer.from(cookieToken), Buffer.from(headerToken))) {
     return res.status(403).json({ error: 'CSRF token mismatch' });
   }
+  next();
+}
+```
+
+```typescript
+// GOOD: pre-session gate for sign-up / sign-in / reset-request (no cookie to bind a token to)
+function preSessionCsrfGate(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+  const source = req.headers.origin ?? req.headers.referer;
+  if (source) {
+    let origin;
+    try { origin = new URL(source).origin; } catch { return res.status(403).end(); }
+    if (!ALLOWED_ORIGINS.has(origin)) return res.status(403).end(); // also rejects "null"
+  } else if (req.headers['sec-fetch-site'] === 'cross-site') {
+    // No Origin/Referer but the browser says cross-site — includes top-level
+    // form-POST navigations, which is exactly login CSRF. Reject regardless
+    // of Sec-Fetch-Mode.
+    return res.status(403).end();
+  }
+
+  // Final backstop for clients that send none of the headers: HTML forms can
+  // only produce urlencoded/multipart/text-plain, never application/json.
+  if (!req.is('application/json')) return res.status(415).end();
   next();
 }
 ```

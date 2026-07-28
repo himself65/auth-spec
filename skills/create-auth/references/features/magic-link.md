@@ -8,32 +8,33 @@ Passwordless authentication via emailed one-time links.
 | Field     | Type     | Constraints                    |
 |-----------|----------|--------------------------------|
 | id        | string   | primary key                    |
-| email     | string   | not null                       |
-| token     | string   | unique, not null (crypto-random) |
+| email     | string   | not null (stored lowercased)   |
+| tokenHash | string   | unique, not null (SHA-256 of the raw token) |
 | expiresAt | datetime | not null (default: 15 minutes) |
 | createdAt | datetime | default now                    |
 
 ## Endpoints
 
 **POST /api/auth/magic-link/send**
-- Body: `{ email, callbackUrl? }`
+- Body: `{ email, callbackUrl? }` (normalize the email: trim + lowercase)
 - Generate a crypto-random token (min 32 bytes, URL-safe base64)
-- Store token with 15-minute expiry
+- Store the SHA-256 hash of the token with 15-minute expiry — the raw token exists only inside the emailed link
 - Send email with link: `{callbackUrl}?token={token}` (or a default callback)
 - Return 200 (always — do not reveal whether email exists)
 - Rate limit: max 3 requests per email per 15 minutes
 
 **POST /api/auth/magic-link/verify**
 - Body: `{ token }`
-- Look up token, verify not expired
-- If valid: create or find User, create Session, delete token, return token + user
+- Hash the presented token (SHA-256) and look up by `tokenHash`; verify not expired
+- **Consume atomically** (conditional delete gated on affected rows — see `references/pitfalls/single-use-token-race.md`); concurrent redemptions of the same link must mint at most one session
+- If consumed: create or find User, create Session, return session token + user
 - If invalid or expired: return 401 with generic error
-- Delete token after successful verification (single use)
 
 ## Implementation Rules
 
 - Tokens must be crypto-random (min 32 bytes), URL-safe base64 encoded
-- Each token is single-use — delete after verification
+- Store only the SHA-256 hash at rest (see Token Generation & Storage below); look up by hash at verify time
+- Each token is single-use — consume with one conditional write (affected-rows check), never find-then-delete
 - Delete all previous tokens for the same email when generating a new one
 - Do not reveal in error messages whether the email exists
 - If the user does not exist, create a new User + Account (providerId: "magic-link") on successful verification
