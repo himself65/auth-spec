@@ -17,9 +17,10 @@ MFA closes the "stolen password" attack class — but only if enrollment, recove
 | Prefer phishing-resistant factors | Passkeys (WebAuthn) and hardware keys (FIDO2) are phishing-resistant. TOTP and push notifications are **not** — they can be relayed in real time. SMS is the weakest. |
 | MFA not bypassable by alternate flows | Ensure **every** sign-in path enforces MFA once enabled: password login, magic link, "forgot password" reset completion, OAuth account linking, API token issuance. A common bug: password reset sets a new session without MFA. |
 | Step-up for sensitive actions | Re-verify MFA before: password/email/phone change, MFA factor add/remove, session revocation of others, payment changes, privileged API key creation. |
-| Recovery codes | Generate 8–10 one-time codes (≥ 64 bits entropy each) at MFA enrollment. Show once. Store **hashed** server-side. Invalidate after use. |
+| Recovery codes | Generate 8–10 one-time codes (≥ 64 bits entropy each) at MFA enrollment. Show once. Store **hashed** server-side. Invalidate after use — remove/mark only the consumed code and leave the remaining entries byte-for-byte untouched; re-serializing the set through a different encoding/encryption than enrollment used corrupts every remaining code. |
 | Account recovery ≠ "contact support" as a bypass | Document recovery: identity verification + cooling-off period. Never let support bypass MFA without verification + audit log. Advertise the delay publicly so attackers know it's not exploitable. |
 | MFA enrollment requires re-auth | Require password / current-session-in-good-standing to add or remove a factor. Send a confirmation email. |
+| 2FA challenge state | The state between password-ok and second-factor-ok is its own short-TTL (≤ 5 min), single-use credential scoped exclusively to the challenge endpoint — every other endpoint rejects it. Completing the challenge must consume it **atomically** (concurrent verifies mint at most one session) and issue a **new** session token — rotation on the privilege boundary, never an in-place upgrade of the pending token. An expired challenge fails closed. |
 | Rate-limit verification | See `rate-limiting.md` — MFA verification must be throttled per account and per IP. Lock the factor after ~5 failed codes. |
 | Audit log | Log MFA enroll/remove, factor use, recovery-code use, "sign out all other sessions", and email them to the user. |
 
@@ -32,7 +33,7 @@ MFA closes the "stolen password" attack class — but only if enrollment, recove
 | Time window | Accept ±1 time step (30s default) to tolerate clock drift. No more — wider windows weaken security. |
 | Replay prevention | Track the last successfully used counter per user and reject codes ≤ that counter. Without this, an attacker who sees one code can reuse it within its window. |
 | Secret storage | Encrypted at rest. Never returned to the client after enrollment. |
-| Enrollment confirmation | Require the user to enter a code from the QR before activating TOTP — otherwise users lock themselves out. |
+| Enrollment confirmation | Require the user to enter a code from the QR before activating TOTP — otherwise users lock themselves out. Gate sign-in's 2FA requirement on the *activated* flag, never on the mere existence of a TOTP-secret row: an abandoned half-enrollment must not demand a factor the user never finished setting up. |
 
 ### Checklist — WebAuthn / Passkeys
 

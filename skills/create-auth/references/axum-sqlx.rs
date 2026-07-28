@@ -14,7 +14,7 @@
 // tokio = { version = "1", features = ["full"] }
 
 use axum::{
-    extract::{Json, State},
+    extract::{ConnectInfo, Json, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -23,6 +23,7 @@ use axum::{
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::net::SocketAddr;
 use uuid::Uuid;
 
 // --- models ---
@@ -32,6 +33,7 @@ pub struct User {
     pub id: String,
     pub email: String,
     pub name: Option<String>,
+    pub image: Option<String>,
     pub email_verified: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -126,6 +128,13 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
 // --- router ---
 
 pub fn auth_router() -> Router<PgPool> {
@@ -140,9 +149,13 @@ pub fn auth_router() -> Router<PgPool> {
 
 async fn sign_up(
     State(pool): State<PgPool>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<SignUpRequest>,
 ) -> impl IntoResponse {
-    if req.email.is_empty() || req.password.len() < 8 {
+    // Normalize email so lookups and uniqueness are case-insensitive
+    let email = req.email.trim().to_lowercase();
+    if email.is_empty() || req.password.len() < 8 {
         return error_json(StatusCode::BAD_REQUEST, "invalid email or password (min 8 chars)").into_response();
     }
 
@@ -165,7 +178,7 @@ async fn sign_up(
     let insert_result = sqlx::query(
         "INSERT INTO users (id, email, name, email_verified, created_at, updated_at) VALUES ($1, $2, $3, false, $4, $4)"
     )
-    .bind(&user_id).bind(&req.email).bind(&req.name).bind(now)
+    .bind(&user_id).bind(&email).bind(&req.name).bind(now)
     .execute(&mut *tx).await;
 
     if let Err(e) = insert_result {
@@ -174,23 +187,31 @@ async fn sign_up(
         let msg = e.to_string();
         if msg.contains("unique") || msg.contains("duplicate") {
             return Json(AuthResponse {
-                user: UserResponse { id: Uuid::new_v4().to_string(), email: req.email, name: req.name },
+                user: UserResponse { id: Uuid::new_v4().to_string(), email, name: req.name },
                 token: generate_token(),
             }).into_response();
         }
         return error_json(StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
     }
 
+    // account_id for the credential provider is the user's own id.
+    // The accounts table is UNIQUE on (provider_id, account_id).
     let _ = sqlx::query(
-        "INSERT INTO accounts (id, user_id, provider_id, password_hash, created_at, updated_at) VALUES ($1, $2, 'credential', $3, $4, $4)"
+        "INSERT INTO accounts (id, user_id, account_id, provider_id, password_hash, created_at, updated_at) VALUES ($1, $2, $3, 'credential', $4, $5, $5)"
     )
-    .bind(Uuid::new_v4().to_string()).bind(&user_id).bind(&password_hash).bind(now)
+    .bind(Uuid::new_v4().to_string()).bind(&user_id).bind(&user_id).bind(&password_hash).bind(now)
     .execute(&mut *tx).await;
 
+    // IP from the peer socket address (requires `into_make_service_with_connect_info`
+    // when serving); use X-Forwarded-For instead only when deployed behind a trusted proxy
+    let ip_address = addr.ip().to_string();
+    let user_agent = extract_user_agent(&headers);
+
     let _ = sqlx::query(
-        "INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)"
+        "INSERT INTO sessions (id, user_id, token, ip_address, user_agent, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)"
     )
-    .bind(Uuid::new_v4().to_string()).bind(&user_id).bind(&token).bind(expires_at).bind(now)
+    .bind(Uuid::new_v4().to_string()).bind(&user_id).bind(&token)
+    .bind(&ip_address).bind(&user_agent).bind(expires_at).bind(now)
     .execute(&mut *tx).await;
 
     if tx.commit().await.is_err() {
@@ -198,19 +219,22 @@ async fn sign_up(
     }
 
     Json(AuthResponse {
-        user: UserResponse { id: user_id, email: req.email, name: req.name },
+        user: UserResponse { id: user_id, email, name: req.name },
         token,
     }).into_response()
 }
 
 async fn sign_in(
     State(pool): State<PgPool>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<SignInRequest>,
 ) -> impl IntoResponse {
+    let email = req.email.trim().to_lowercase();
     let row = sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
         "SELECT u.id, u.email, u.name, a.password_hash FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.email = $1 AND a.provider_id = 'credential'"
     )
-    .bind(&req.email)
+    .bind(&email)
     .fetch_optional(&pool)
     .await
     .unwrap_or(None);
@@ -225,10 +249,13 @@ async fn sign_in(
 
     let token = generate_token();
     let now = Utc::now();
+    let ip_address = addr.ip().to_string();
+    let user_agent = extract_user_agent(&headers);
     let _ = sqlx::query(
-        "INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)"
+        "INSERT INTO sessions (id, user_id, token, ip_address, user_agent, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)"
     )
     .bind(Uuid::new_v4().to_string()).bind(&user_id).bind(&token)
+    .bind(&ip_address).bind(&user_agent)
     .bind(now + Duration::days(SESSION_DURATION_DAYS)).bind(now)
     .execute(&pool).await;
 

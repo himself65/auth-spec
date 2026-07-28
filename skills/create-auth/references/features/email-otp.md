@@ -9,33 +9,35 @@ Passwordless authentication via one-time codes sent to email.
 |-----------|----------|------------------------------------|
 | id        | string   | primary key                        |
 | userId    | string   | foreign key -> User, nullable (for sign-up flows) |
-| email     | string   | not null                           |
-| code      | string   | not null (6-digit numeric)         |
+| email     | string   | not null (stored lowercased)       |
+| codeHash  | string   | not null (salted SHA-256 of the 6-digit code) |
+| attempts  | int      | default 0 (failed verifications)   |
 | expiresAt | datetime | not null (default: 10 minutes)     |
 | createdAt | datetime | default now                        |
 
 ## Endpoints
 
 **POST /api/auth/email-otp/send**
-- Body: `{ email }`
+- Body: `{ email }` (normalize: trim + lowercase before any lookup)
 - Generate a 6-digit numeric code (crypto-random)
-- Store code with 10-minute expiry
+- Store the salted SHA-256 hash of the code (never the raw code) with 10-minute expiry
 - Send code via email (use the project's email service)
 - Return 200 (always — do not reveal whether email exists)
 - Rate limit: max 3 requests per email per 10 minutes
 
 **POST /api/auth/email-otp/verify**
-- Body: `{ email, code }`
-- Look up the most recent unexpired code for this email
-- If valid: create or find User, create Session, delete code, return token + user
+- Body: `{ email, code }` (normalize the email as in send)
+- Look up the most recent unexpired code row for this email
+- Increment `attempts` atomically; after 5 failures delete the row and require a new send
+- Compare hashes constant-time; on success **consume the row atomically** (conditional delete gated on affected rows — see `references/pitfalls/single-use-token-race.md`) so concurrent verifies mint at most one session
+- If consumed: create or find User, create Session, return token + user
 - If invalid or expired: return 401 with generic error
-- Delete code after successful verification (single use)
 
 ## Implementation Rules
 
 - Codes MUST be 6 digits, zero-padded (e.g., "003847")
 - Generate with crypto-random, not Math.random
-- Each code is single-use — delete after verification
+- Each code is single-use — consume with one conditional write (affected-rows check), never find-then-delete
 - Delete all previous codes for the same email when generating a new one
 - Constant-time comparison for code verification
 - Do not reveal in error messages whether the email exists

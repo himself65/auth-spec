@@ -13,7 +13,7 @@ Defines the organization and priority of security best practice rules.
 ## High Impact
 
 3. **Session Security** (`session-`)
-   Token generation, cookie flags (`__Host-`, `Partitioned`), session lifecycle, fixation prevention, JWT pitfalls.
+   Token generation, cookie flags (`__Host-`/`__Secure-`, `Partitioned`), session lifecycle, fixation prevention, freshness (sudo mode), JWT pitfalls.
 
 4. **Input Validation** (`input-`)
    SQL/NoSQL injection, XSS, header injection, SSRF, open redirect, request body schema.
@@ -25,7 +25,7 @@ Defines the organization and priority of security best practice rules.
    Factor enrollment, recovery codes, step-up, passkey verification, TOTP replay prevention.
 
 7. **Short-Lived Token Lifecycle** (`token-`)
-   Password reset, email verification / change, magic link, OTP — hashing, one-time use, sibling invalidation.
+   Password reset, email verification / change, magic link, OTP, 2FA challenges — hashing, atomic one-time use, sibling invalidation.
 
 ## Medium Impact
 

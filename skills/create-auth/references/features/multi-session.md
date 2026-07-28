@@ -4,13 +4,7 @@ Allow multiple concurrent sessions per user with session listing and selective r
 
 ## Schema Additions
 
-Add to **Session** table:
-| Field     | Type   | Constraints |
-|-----------|--------|-------------|
-| userAgent | string | nullable    |
-| ipAddress | string | nullable    |
-
-These fields help users identify their sessions (e.g., "Chrome on macOS").
+None — the core **Session** table already includes nullable `userAgent` and `ipAddress` columns, captured at session creation. They are what lets users identify their sessions (e.g., "Chrome on macOS"). If this project scaffolded its core auth before those columns existed, add them now as nullable strings and start populating them on sign-in/sign-up.
 
 ## Endpoints
 

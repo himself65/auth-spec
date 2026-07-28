@@ -5,7 +5,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -19,6 +19,7 @@ class User(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     email = Column(String, unique=True, nullable=False)
     name = Column(String, nullable=True)
+    image = Column(String, nullable=True)
     email_verified = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -34,6 +35,8 @@ class Session(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     token = Column(String, unique=True, nullable=False)
     expires_at = Column(DateTime, nullable=False)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     user = relationship("User", back_populates="sessions")
@@ -41,10 +44,12 @@ class Session(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
+    __table_args__ = (UniqueConstraint("provider_id", "account_id"),)
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     provider_id = Column(String, nullable=False)
+    account_id = Column(String, nullable=False)
     password_hash = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -90,7 +95,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -108,24 +113,34 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 @router.post("/sign-up", response_model=AuthResponse)
-async def sign_up(req: SignUpRequest, db: AsyncSession = Depends(get_db)):
+async def sign_up(req: SignUpRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # Normalize email before validation and storage
+    email = req.email.strip().lower()
+
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
     # Always hash password to prevent timing-based email enumeration
     hashed = hash_password(req.password)
 
-    user = User(email=req.email, name=req.name)
+    # Generate the id up front — SQLAlchemy column defaults only fire at flush,
+    # and the account/session rows below need the value now
+    user = User(id=str(uuid.uuid4()), email=email, name=req.name)
+    # For the credential provider, account_id is the new user's id
     account = Account(
         user_id=user.id,
         provider_id="credential",
+        account_id=user.id,
         password_hash=hashed,
     )
     token = secrets.token_hex(32)
+    # request.client.host is the direct peer IP; use X-Forwarded-For only behind a trusted proxy
     session = Session(
         user_id=user.id,
         token=token,
         expires_at=datetime.now(timezone.utc) + SESSION_DURATION,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
     )
 
     try:
@@ -137,7 +152,7 @@ async def sign_up(req: SignUpRequest, db: AsyncSession = Depends(get_db)):
         # Unique constraint violation (duplicate email) — return fake success
         # to prevent email enumeration. The dummy token won't resolve to a session.
         return AuthResponse(
-            user=UserResponse(id=str(uuid.uuid4()), email=req.email, name=req.name),
+            user=UserResponse(id=str(uuid.uuid4()), email=email, name=req.name),
             token=secrets.token_hex(32),
         )
 
@@ -148,8 +163,11 @@ async def sign_up(req: SignUpRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/sign-in", response_model=AuthResponse)
-async def sign_in(req: SignInRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == req.email))
+async def sign_in(req: SignInRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # Normalize email before lookup
+    email = req.email.strip().lower()
+
+    result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
 
     if not user:
@@ -170,10 +188,13 @@ async def sign_in(req: SignInRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = secrets.token_hex(32)
+    # request.client.host is the direct peer IP; use X-Forwarded-For only behind a trusted proxy
     session = Session(
         user_id=user.id,
         token=token,
         expires_at=datetime.now(timezone.utc) + SESSION_DURATION,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
     )
     db.add(session)
     await db.commit()

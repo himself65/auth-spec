@@ -135,8 +135,9 @@ Create these tables/models:
 | Field | Type | Constraints |
 |----------------|----------|----------------------|
 | id | string | primary key |
-| email | string | unique, not null |
+| email | string | unique, not null (store lowercased) |
 | name | string | nullable |
+| image | string | nullable |
 | emailVerified | boolean | default false |
 | createdAt | datetime | default now |
 | updatedAt | datetime | auto-update |
@@ -148,7 +149,11 @@ Create these tables/models:
 | userId | string | foreign key -> User, not null |
 | token | string | unique, not null |
 | expiresAt | datetime | not null |
+| ipAddress | string | nullable |
+| userAgent | string | nullable |
 | createdAt | datetime | default now |
+
+`ipAddress` and `userAgent` power the "signed-in devices" list (see the Multi-Session feature) and security-notification emails.
 
 **Account**
 | Field | Type | Constraints |
@@ -156,26 +161,32 @@ Create these tables/models:
 | id | string | primary key |
 | userId | string | foreign key -> User, not null |
 | providerId | string | not null (e.g. "credential") |
+| accountId | string | not null (provider-side user id; = userId for "credential") |
 | passwordHash | string | nullable |
 | createdAt | datetime | default now |
 | updatedAt | datetime | auto-update |
+
+Add a unique constraint on `(providerId, accountId)`. Account lookups must always filter by that full tuple — never by `accountId` alone — so that OAuth providers added later cannot collide across ID spaces (see `references/pitfalls/oauth-account-linking.md`).
 
 ### Endpoints
 
 **POST /api/auth/sign-up**
 
 - Body: `{ email, password, name? }`
+- Normalize the email (trim + lowercase) before validation and any lookup — see `references/pitfalls/email-case-normalization.md`
 - Validate email format and password length (min 8 chars)
 - Hash password with a strong algorithm (bcrypt, argon2, or scrypt — use whichever is idiomatic for the language)
-- Create User + Account (providerId: "credential") + Session
+- Create User + Account (providerId: "credential", accountId: the new user's id) + Session
+- Record `ipAddress` and `userAgent` on the session (`User-Agent` header; client IP from the trusted proxy header when deployed behind one, otherwise the socket address)
 - Return session token and user (without password)
 - **Email enumeration protection:** If the email already exists, return the same `200 OK` status and same response shape as a successful sign-up — do not return 409 or any error that reveals the email is taken. The response should be indistinguishable from a real sign-up. Implementation: attempt the insert, catch the unique constraint violation, hash the password anyway (to keep timing consistent), and return a fake success with a dummy user ID and token (that won't actually work as a session). This prevents attackers from discovering which emails are registered via the sign-up endpoint.
 
 **POST /api/auth/sign-in**
 
 - Body: `{ email, password }`
+- Normalize the email (trim + lowercase) before lookup
 - Look up user by email, verify password hash
-- Create new Session
+- Create new Session (record `ipAddress` and `userAgent` as in sign-up)
 - Return session token and user (without password)
 - Return 401 on invalid credentials (generic message, no user enumeration)
 
@@ -200,6 +211,8 @@ Create these tables/models:
 - Use constant-time comparison for password verification (the hashing library handles this)
 - Set session expiry to 7 days by default
 - Return generic "Invalid credentials" on sign-in failure — do not reveal whether the email exists
+- **Normalize emails at the boundary**: trim + lowercase every email arriving in any request (core endpoints and feature endpoints alike) before validation, lookup, or insert, and store only the normalized form. Never compensate at query time with `LOWER()`/`ILIKE`
+- **Consume single-use tokens atomically**: any single-use credential a feature adds (OTP codes, magic-link/reset tokens, 2FA challenges, invitations) must be consumed with a single conditional write, not find-then-update — see `references/pitfalls/single-use-token-race.md`
 - **Prevent email enumeration on sign-up:** When a duplicate email is submitted, return the same status code and response shape as a successful sign-up. Always hash the password (even for duplicates) to prevent timing-based detection. Return a plausible but non-functional fake token and user ID so the response is indistinguishable from a real sign-up.
 - Follow the project's existing code style, file structure, and patterns
 - If the language has a strong type system (Rust, Go, C++, etc.), define proper types/structs for request/response bodies — do not use untyped maps
@@ -226,6 +239,10 @@ Before generating code, read **all** files in `references/pitfalls/` and follow 
 | MCP must not pass tokens upstream       | `references/pitfalls/mcp-token-passthrough.md`      |
 | MCP 401 needs `resource_metadata`       | `references/pitfalls/mcp-www-authenticate.md`       |
 | MCP `.well-known` must mount at root    | `references/pitfalls/mcp-discovery-mounting.md`     |
+| Single-use tokens consume atomically    | `references/pitfalls/single-use-token-race.md`      |
+| Emails normalize at the boundary        | `references/pitfalls/email-case-normalization.md`   |
+| Set-Cookie must survive error paths     | `references/pitfalls/set-cookie-on-error.md`        |
+| OAuth links key on provider+account id  | `references/pitfalls/oauth-account-linking.md`      |
 
 ## Reference Implementations
 

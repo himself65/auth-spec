@@ -6,6 +6,7 @@
 //   id            String    @id @default(uuid())
 //   email         String    @unique
 //   name          String?
+//   image         String?
 //   emailVerified Boolean   @default(false)
 //   createdAt     DateTime  @default(now())
 //   updatedAt     DateTime  @updatedAt
@@ -18,6 +19,8 @@
 //   userId    String
 //   token     String   @unique
 //   expiresAt DateTime
+//   ipAddress String?
+//   userAgent String?
 //   createdAt DateTime @default(now())
 //   user      User     @relation(fields: [userId], references: [id])
 // }
@@ -26,10 +29,13 @@
 //   id           String   @id @default(uuid())
 //   userId       String
 //   providerId   String
+//   accountId    String
 //   passwordHash String?
 //   createdAt    DateTime @default(now())
 //   updatedAt    DateTime @updatedAt
 //   user         User     @relation(fields: [userId], references: [id])
+//
+//   @@unique([providerId, accountId])
 // }
 
 // --- src/routes/auth.ts ---
@@ -42,7 +48,9 @@ const prisma = new PrismaClient();
 const router = Router();
 
 router.post("/sign-up", async (req: Request, res: Response) => {
-  const { email, password, name } = req.body;
+  const { email: rawEmail, password, name } = req.body;
+  // Normalize email so lookups and the unique constraint are case-insensitive
+  const email = rawEmail?.trim().toLowerCase();
 
   if (!email || !password || password.length < 8) {
     return res.status(400).json({ error: "Invalid email or password (min 8 chars)" });
@@ -51,19 +59,24 @@ router.post("/sign-up", async (req: Request, res: Response) => {
   // Always hash the password to prevent timing-based email enumeration
   const passwordHash = await bcrypt.hash(password, 12);
   const sessionToken = crypto.randomUUID();
+  // Generate the user id up front so the credential account can reference it
+  const userId = crypto.randomUUID();
 
   try {
     const user = await prisma.user.create({
       data: {
+        id: userId,
         email,
         name,
         accounts: {
-          create: { providerId: "credential", passwordHash },
+          create: { providerId: "credential", accountId: userId, passwordHash },
         },
         sessions: {
           create: {
             token: sessionToken,
             expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            ipAddress: req.ip ?? null,
+            userAgent: req.headers["user-agent"] ?? null,
           },
         },
       },
@@ -88,7 +101,9 @@ router.post("/sign-up", async (req: Request, res: Response) => {
 });
 
 router.post("/sign-in", async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+  const { email: rawEmail, password } = req.body;
+  // Normalize email the same way sign-up does before the lookup
+  const email = rawEmail?.trim().toLowerCase();
 
   const user = await prisma.user.findUnique({
     where: { email },
@@ -110,6 +125,8 @@ router.post("/sign-in", async (req: Request, res: Response) => {
       userId: user.id,
       token: sessionToken,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers["user-agent"] ?? null,
     },
   });
 

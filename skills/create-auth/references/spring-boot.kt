@@ -10,6 +10,7 @@
 package com.example.auth
 
 import jakarta.persistence.*
+import jakarta.servlet.http.HttpServletRequest
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -28,6 +29,7 @@ data class User(
     @Id val id: String = UUID.randomUUID().toString(),
     @Column(unique = true, nullable = false) val email: String = "",
     val name: String? = null,
+    val image: String? = null,
     @Column(name = "email_verified") val emailVerified: Boolean = false,
     @Column(name = "created_at") val createdAt: Instant = Instant.now(),
     @Column(name = "updated_at") var updatedAt: Instant = Instant.now(),
@@ -39,15 +41,18 @@ data class Session(
     @Id val id: String = UUID.randomUUID().toString(),
     @Column(name = "user_id", nullable = false) val userId: String = "",
     @Column(unique = true, nullable = false) val token: String = "",
+    @Column(name = "ip_address") val ipAddress: String? = null,
+    @Column(name = "user_agent") val userAgent: String? = null,
     @Column(name = "expires_at", nullable = false) val expiresAt: Instant = Instant.now(),
     @Column(name = "created_at") val createdAt: Instant = Instant.now(),
 )
 
 @Entity
-@Table(name = "accounts")
+@Table(name = "accounts", uniqueConstraints = [UniqueConstraint(columnNames = ["provider_id", "account_id"])])
 data class Account(
     @Id val id: String = UUID.randomUUID().toString(),
     @Column(name = "user_id", nullable = false) val userId: String = "",
+    @Column(name = "account_id", nullable = false) val accountId: String = "",
     @Column(name = "provider_id", nullable = false) val providerId: String = "",
     @Column(name = "password_hash") val passwordHash: String? = null,
     @Column(name = "created_at") val createdAt: Instant = Instant.now(),
@@ -92,8 +97,10 @@ class AuthController(
     private fun generateToken(): String = UUID.randomUUID().toString() + UUID.randomUUID().toString()
 
     @PostMapping("/sign-up")
-    fun signUp(@RequestBody req: SignUpRequest): ResponseEntity<AuthResponse> {
-        if (req.email.isBlank() || req.password.length < 8) {
+    fun signUp(@RequestBody req: SignUpRequest, request: HttpServletRequest): ResponseEntity<AuthResponse> {
+        // Normalize email so lookups and uniqueness are case-insensitive
+        val email = req.email.trim().lowercase()
+        if (email.isBlank() || req.password.length < 8) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid email or password (min 8 chars)")
         }
 
@@ -101,10 +108,12 @@ class AuthController(
         val passwordHash = encoder.encode(req.password)
 
         try {
-            val user = userRepo.save(User(email = req.email, name = req.name))
+            val user = userRepo.save(User(email = email, name = req.name))
 
+            // account_id for the credential provider is the user's own id
             accountRepo.save(Account(
                 userId = user.id,
+                accountId = user.id,
                 providerId = "credential",
                 passwordHash = passwordHash,
             ))
@@ -113,6 +122,10 @@ class AuthController(
             sessionRepo.save(Session(
                 userId = user.id,
                 token = token,
+                // remoteAddr is the direct peer; use X-Forwarded-For instead only
+                // when deployed behind a trusted proxy
+                ipAddress = request.remoteAddr,
+                userAgent = request.getHeader("User-Agent"),
                 expiresAt = Instant.now().plus(sessionDuration, ChronoUnit.DAYS),
             ))
 
@@ -124,15 +137,16 @@ class AuthController(
             // Unique constraint violation (duplicate email) — return fake success
             // to prevent email enumeration. The dummy token won't resolve to a session.
             return ResponseEntity.ok(AuthResponse(
-                user = UserResponse(UUID.randomUUID().toString(), req.email, req.name),
+                user = UserResponse(UUID.randomUUID().toString(), email, req.name),
                 token = generateToken(),
             ))
         }
     }
 
     @PostMapping("/sign-in")
-    fun signIn(@RequestBody req: SignInRequest): AuthResponse {
-        val user = userRepo.findByEmail(req.email)
+    fun signIn(@RequestBody req: SignInRequest, request: HttpServletRequest): AuthResponse {
+        val email = req.email.trim().lowercase()
+        val user = userRepo.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials")
 
         val account = accountRepo.findByUserIdAndProviderId(user.id, "credential")
@@ -146,6 +160,8 @@ class AuthController(
         sessionRepo.save(Session(
             userId = user.id,
             token = token,
+            ipAddress = request.remoteAddr,
+            userAgent = request.getHeader("User-Agent"),
             expiresAt = Instant.now().plus(sessionDuration, ChronoUnit.DAYS),
         ))
 

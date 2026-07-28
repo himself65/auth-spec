@@ -19,20 +19,21 @@ OAuth bugs are the most common source of modern account takeover. The protocol i
 | `nonce` (OIDC) | For OIDC flows, include `nonce` in the auth request and verify it in the returned ID token. Stops ID-token replay. |
 | Redirect URI — exact match | The `redirect_uri` registered with the provider must be **exact string match**, no wildcards, no substring. An attacker who can register `https://example.com.evil.com` when the match is a prefix gets the code. |
 | Redirect URI allow-list | If you proxy / accept a dynamic `redirect_uri` (e.g. for preview deploys), validate against a strict allow-list with full URL equality. |
-| Code one-time use | Authorization codes must be redeemed exactly once and expire within ~60s. Invalidate on reuse — reuse signals interception. |
+| Code one-time use | Authorization codes must be redeemed exactly once and expire within ~60s. Consume **atomically** (single conditional write on the unconsumed state, exactly-one-row check) so concurrent exchange requests can't both succeed. On reuse, revoke the tokens already issued from that code — reuse signals interception. |
 | Client secret | Server-side only — never in SPA / mobile bundles. Use PKCE-only (public client) for browser and native apps. Rotate on suspected leak. |
 | Token storage | Access + refresh tokens from IdPs must be encrypted at rest (AES-GCM with KMS key) if you persist them. Don't log them. |
 | Account linking — verified email only | When linking an OAuth account to a local account by email, **require the IdP to mark the email as verified** (`email_verified: true` for Google/OIDC, GitHub's verified-emails API). Otherwise an attacker registers an IdP account with victim's email and takes over. |
 | Account linking — re-auth | Require the user to re-authenticate (password or existing session in good standing) before linking a new IdP, and before unlinking the **only** sign-in method. |
-| Provider identity binding | Key the link on `(provider, provider_account_id)`, not the email. Emails change; provider IDs don't. |
+| Provider identity binding | Key the link on `(provider, provider_account_id)`, not the email. Emails change; provider IDs don't. Lookups must always filter by the **full tuple** — never by `provider_account_id` alone. Providers use overlapping ID spaces (numeric IDs especially), so a bare-ID lookup can resolve an attacker's provider-A account to a victim's provider-B link. Enforce with a composite unique constraint on `(provider, provider_account_id)`. |
+| Provider profile `id` null-guard | Reject the callback when the provider profile's `id` is null/undefined/empty — never stringify it. `String(undefined)` persists the literal `"undefined"` as the account key, collapsing every broken profile into one shared account: the first attacker to hit the bug owns every user who hits it after. |
 | `email` from IdP is not authoritative | Treat the IdP-provided email as unverified unless `email_verified=true` is explicit. Some providers (e.g. Azure AD personal accounts) allow unverified emails. |
-| ID token signature | Verify `iss`, `aud`, `exp`, `iat`, and signature (use the provider's JWKS). Cache JWKS with a sensible TTL and handle key rotation. |
+| ID token signature | Verify `iss`, `aud`, `exp`, `iat`, and signature (use the provider's JWKS). Cache JWKS **per issuer** with a sensible TTL (a shared cache cross-contaminates keys between issuers) and handle key rotation. |
 | `scope` minimization | Request the minimum scopes. Review on each provider update — `profile` + `email` is enough for sign-in; don't request `offline_access` unless refresh is needed. |
 | Consent / incremental auth | Reauthorize ("incremental consent") for elevated scopes. Don't silently acquire drive/contact/repo scopes on first sign-in. |
 | Logout propagation (RP-initiated / back-channel) | On logout, revoke refresh tokens at the IdP when possible. For SSO-heavy apps, support back-channel logout (OIDC Front-Channel / Back-Channel Logout). |
 | Dynamic provider registration | Don't enable dynamic client registration at your IdP endpoint unless strictly required — it's a footgun. |
 | "Sign in with X" button CSRF (login CSRF) | The login callback itself is CSRF-exposed if `state` isn't bound. See `csrf-protection.md`. |
-| Open-redirect via `redirect_uri` trick | The `redirect_uri` parameter on your own authorize endpoint is a classic open-redirect vector. Validate it server-side before sending the user to the IdP. |
+| Open-redirect via `redirect_uri` trick | The `redirect_uri` parameter on your own authorize endpoint is a classic open-redirect vector. Validate it server-side before sending the user to the IdP. Reject dangerous schemes (`javascript:`, `data:`, `vbscript:`) and any value containing a fragment — RFC 6749 §3.1.2 forbids fragments in redirect URIs. |
 
 ### Incorrect
 
@@ -77,6 +78,9 @@ url.search = new URLSearchParams({
 ```typescript
 // GOOD: verified-email-only linking, keyed by provider account id
 async function onGithubCallback(profile, verifiedEmails) {
+  if (profile.id == null || profile.id === '') {
+    throw new HttpError(502, 'Provider returned no account id'); // never String(undefined)
+  }
   const emailVerified = verifiedEmails.some(e => e.email === profile.email && e.verified);
   const existingLink = await db.account.findUnique({
     where: { provider_providerAccountId: { provider: 'github', providerAccountId: profile.id } },

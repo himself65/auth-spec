@@ -16,11 +16,11 @@ Individual security rules are in the `rules/` directory, organized by impact pri
 - `rules/error-handling.md` — User enumeration, timing attacks, status/size symmetry, stack trace leaks
 
 **High Impact:**
-- `rules/session-security.md` — Token generation, `__Host-`/`Partitioned` cookies, JWT pitfalls, session fixation, rotation on state change
+- `rules/session-security.md` — Token generation, `__Host-`/`__Secure-`/`Partitioned` cookies, JWT pitfalls, session fixation, freshness (sudo mode), rotation on state change
 - `rules/input-validation.md` — SQL/NoSQL injection, XSS, SSRF, open redirect, schema validation
 - `rules/oauth-oidc.md` — Code + PKCE, `state`/`nonce`, redirect-URI allow-list, account-linking pre-takeover
 - `rules/mfa-passkeys.md` — TOTP replay prevention, WebAuthn verification, step-up, recovery codes
-- `rules/token-lifecycle.md` — Password reset, email verification, magic link, OTP hashing & one-time use
+- `rules/token-lifecycle.md` — Password reset, email verification, magic link, OTP, 2FA challenges — hashing & atomic one-time use
 
 **Medium Impact:**
 - `rules/rate-limiting.md` — Multi-dim throttling (account + IP), SMS pumping, credential stuffing
