@@ -33,7 +33,7 @@ Passwordless authentication using platform authenticators (Touch ID, Windows Hel
 
 ### POST /api/auth/passkey/register/options
 
-Generate WebAuthn registration options. Requires an existing session (user must be signed in).
+Generate WebAuthn registration options. Requires an existing session (user must be signed in) **and a proven primary identifier** — `emailVerified` for an email account, `phoneVerified` for a phone-only one.
 
 - **Auth**: Bearer token (valid session required)
 - **Response 200**: `PublicKeyCredentialCreationOptionsJSON`
@@ -46,8 +46,8 @@ Server must:
      rp: { id: <configurable, default: domain>, name: <app name> },
      user: {
        id: <base64url of user's unique webauthn ID — NOT the user table PK>,
-       name: <user email or username>,
-       displayName: <user display name>
+       name: <the identifier this account proved — email, username, or E.164 phone; never null, never a *.placeholder.invalid string>,
+       displayName: <user display name, falling back to that same identifier>
      },
      challenge: <base64url challenge>,
      pubKeyCredParams: [
@@ -73,7 +73,7 @@ Server must:
 
 Verify WebAuthn registration (attestation) response and store the new passkey.
 
-- **Auth**: Bearer token (valid session required)
+- **Auth**: Bearer token (valid session required) — re-check the proven-identifier gate from the options leg here as well; this is the leg that persists the authenticator
 - **Body**: `{ credential: RegistrationResponseJSON }`
 - **Response 200**: `{ id, name, deviceType, backedUp, transports, createdAt }`
 - **Response 400**: invalid/expired challenge, verification failed
@@ -213,7 +213,7 @@ Never return `publicKey` or `credentialId` to the client in listing responses.
 
 ### Security
 
-- **Registration requires an existing session** — user must prove identity first (password, magic link, etc.)
+- **Registration requires an existing session AND a proven primary identifier** (`emailVerified` for an email account, `phoneVerified` for a phone-only one) — a session minted at sign-up proves possession of a password, not of the identifier. A passkey registered on an unclaimed identifier is a worse persistence primitive than the password that created it: it survives password reset, and its own sign-in path needs no session at all (see the authenticate endpoints above). Never gate registration on a live session alone.
 - **Authentication is passwordless** — no prior session needed
 - **Attestation**: use `"none"` for consumer apps. Only use `"direct"` or `"enterprise"` when compliance requires device provenance.
 - **Never expose `publicKey` or raw `credentialId` in API list responses** — only return metadata

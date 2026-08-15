@@ -23,7 +23,7 @@ Security headers are a defense-in-depth layer. They don't prevent auth bugs dire
 | `Cross-Origin-Opener-Policy` | `same-origin` on authenticated pages — prevents cross-origin window references and enables Spectre-style isolation. Required for some modern APIs. |
 | `Cross-Origin-Embedder-Policy` | `require-corp` or `credentialless` — pairs with COOP for full origin isolation. Can break legacy embeds — verify before rolling out. |
 | `Cross-Origin-Resource-Policy` | `same-origin` on auth responses — prevents other origins from embedding them via `<img>`/`<script>` for side-channel leaks. |
-| `Cache-Control` on auth responses | `no-store` on sign-in, sign-up, token, reset, session, and user-profile responses. Prevents caching tokens or PII in browser/proxy caches. |
+| `Cache-Control` on auth responses | `no-store` on sign-in, sign-up, token, reset, session, and user-profile responses, plus anything else whose body carries a credential (an API key at creation, backup codes, a newly registered client's secret) — and on those endpoints' **error** responses too; RFC 6749 §5.1 makes it a MUST for the token endpoint either way. Prevents caching tokens or PII in browser/proxy caches. `GET` is the sharp edge: a browser will disk-cache `GET /session` and keep serving "signed in" long after the server-side session died. Set the header where the endpoint is declared rather than by hand at each `return`, and assert it in a test — dispatch and serialization layers are exactly where response headers and status codes get dropped unnoticed. |
 | `Clear-Site-Data` on logout | `Clear-Site-Data: "cookies", "storage", "cache"` on the logout response — reliably wipes client state. Omit `"executionContexts"` unless you want to force reload. |
 | `Trusted Types` (optional, high security) | `Content-Security-Policy: require-trusted-types-for 'script'; trusted-types default` — eliminates DOM XSS sinks. Requires app code changes. |
 | Verbose server headers | Strip `Server`, `X-Powered-By`, framework-version headers — they help attackers fingerprint your stack. |
@@ -62,8 +62,9 @@ function securityHeaders(req, res, next) {
   next();
 }
 
-// On auth endpoints, add:
+// On auth endpoints, add — on error responses as well as success:
 res.setHeader('Cache-Control', 'no-store');
+res.setHeader('Pragma', 'no-cache'); // RFC 6749 §5.1 / RFC 7591 §3.2.1 pair this with no-store
 
 // On logout:
 res.setHeader('Clear-Site-Data', '"cookies", "storage", "cache"');

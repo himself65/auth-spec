@@ -27,7 +27,9 @@ Passwordless authentication via emailed one-time links.
 - Body: `{ token }`
 - Hash the presented token (SHA-256) and look up by `tokenHash`; verify not expired
 - **Consume atomically** (conditional delete gated on affected rows — see `references/pitfalls/single-use-token-race.md`); concurrent redemptions of the same link must mint at most one session
-- If consumed: create or find User, create Session, return session token + user
+- If consumed and no User exists for this email: create User + Account (providerId: "magic-link") with `emailVerified = true`, create Session, return session token + user
+- If consumed and a User already exists with `emailVerified = false` **and has proven no other identifier** (`phoneVerified` false): that row may have been planted by someone who never proved control of the address — claim and strip it in one transaction (see `references/pitfalls/pre-account-hijack-strip.md`), then create Account (providerId: "magic-link") + Session. If it already carries a verified phone it is an established account, not a plant: return the generic 401 and let the owner attach the address from an authenticated session
+- If consumed and a User already exists with `emailVerified = true`: this is the proven owner — do not strip, leave every Account, Passkey and TwoFactor row intact; upsert this feature's Account on `(providerId, accountId)`, create Session, return session token + user
 - If invalid or expired: return 401 with generic error
 
 ## Implementation Rules
@@ -37,7 +39,9 @@ Passwordless authentication via emailed one-time links.
 - Each token is single-use — consume with one conditional write (affected-rows check), never find-then-delete
 - Delete all previous tokens for the same email when generating a new one
 - Do not reveal in error messages whether the email exists
-- If the user does not exist, create a new User + Account (providerId: "magic-link") on successful verification
+- On successful verification, resolve the User through the shared sign-up gate in `SKILL.md`'s Implementation Rules rather than inserting one here; if it permits a new account, create User + Account (providerId: "magic-link") with `emailVerified = true`
+- Never send to, resolve, or create against a synthesized placeholder address (`*.placeholder.invalid`, see `references/features/phone-number.md`) — treat a request for one as a no-op that still returns the generic success response
+- If the User already exists and is still unverified, use the single-transaction claim-and-strip of `references/pitfalls/pre-account-hijack-strip.md` — nothing that predates this proof (password, passkey, session) may survive it. That strip deletes every Account row, so create this feature's own Account (providerId: "magic-link") after it and before minting the Session. On an already-verified row no strip runs and the Account may already exist — upsert on `(providerId, accountId)` rather than blind-inserting, or the second passwordless sign-in violates the unique constraint
 - The callback URL should be validated against an allowlist to prevent open redirect
 
 ## Best Practices (Industry Consensus)

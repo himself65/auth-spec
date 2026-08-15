@@ -29,7 +29,7 @@ Defines the organization and priority of security best practice rules.
 
 ## Medium Impact
 
-8. **Rate Limiting & Brute-Force Protection** (`rate-limiting-`)
+8. **Rate Limiting & Brute-Force Protection** (`rate-`)
    Multi-dimensional throttling (account + IP), SMS pumping, credential stuffing, CAPTCHA placement.
 
 9. **CSRF Protection** (`csrf-`)
@@ -37,5 +37,5 @@ Defines the organization and priority of security best practice rules.
 
 ## Lower Priority
 
-10. **HTTP Security Headers** (`http-headers-`)
+10. **HTTP Security Headers** (`http-security-`)
     HSTS, CSP (nonce), COOP/COEP/CORP, `Clear-Site-Data` on logout, Trusted Types.

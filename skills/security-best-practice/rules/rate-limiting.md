@@ -1,7 +1,7 @@
 ---
 title: Rate Limiting & Brute-Force Protection
 impact: MEDIUM
-tags: rate-limit, brute-force, account-lockout, captcha, 429, sms-pumping, credential-stuffing
+tags: rate-limit, brute-force, account-lockout, captcha, 429, sms-pumping, credential-stuffing, ip-spoofing
 ---
 
 ## Rate Limiting & Brute-Force Protection
@@ -30,11 +30,12 @@ Without rate limiting, attackers can brute-force passwords, credential-stuff lea
 
 ### Implementation Notes
 
-- For IP extraction behind proxies, trust `X-Forwarded-For` **only** from known load balancers. A naive `req.headers['x-forwarded-for']` is attacker-controlled.
+- For IP extraction behind proxies, name the trusted source in config — never read `req.headers['x-forwarded-for']` unqualified, and never take `xff.split(',')[0]`. An *appending* proxy leaves the leftmost token exactly as the client sent it, so it is forgeable even behind a load balancer you own, and a caller can rotate it for a fresh bucket on every request. Trust either a single-valued header your proxy **overwrites** (`X-Real-IP`, `CF-Connecting-IP`), or walk the chain right-to-left past your own proxy IPs/CIDRs and take the first untrusted hop; with neither configured, key on the socket peer address — over-broad but unforgeable. Either way this only holds if the origin is unreachable except through those proxies.
 - When using sliding-window or token-bucket algorithms, document the window and burst. Don't silently change them — it affects support triage.
-- Prefer **fail-closed** on the limiter: if Redis is down, reject auth attempts rather than letting them all through.
+- **Fail open** on the limiter itself: if the counter store is down, allow the request and log loudly — blocking every sign-in is a worse outage than temporarily losing throttling. Fail **closed** on code-verification counters (OTP attempts, 2FA `failedVerificationCount`), where a lost count is a brute-force window.
+- The counter write must be **awaited** before the response is sent. A floating promise (`store.set(...)` with no `await`) works under a long-lived Node process and silently drops on serverless/edge, where the instance is frozen at response time and the limit never increments. Audit for unawaited limiter, lockout-counter, and security-event writes on every auth path.
 
-Refer to `references/features/rate-limiting.md` in the create-auth skill for full implementation details and code examples across languages.
+Refer to `skills/create-auth/references/features/rate-limiting.md` for full implementation details and code examples across languages.
 
 ### References
 

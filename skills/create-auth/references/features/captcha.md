@@ -12,7 +12,7 @@ The implementation should accept a captcha configuration:
 - `provider`: "recaptcha" | "hcaptcha" | "turnstile"
 - `secretKey`: server-side verification key
 - `siteKey`: client-side key (returned in config endpoint)
-- `endpoints`: which endpoints require captcha (default: sign-up, sign-in)
+- `endpoints`: which endpoints require captcha, as full paths or `*` wildcard patterns (default: `/sign-up`, `/sign-in`, `/magic-link/send`, `/email-otp/send`, `/phone/send` — exact matching does not catch the credential-send endpoints by prefix, and they are the SMS-pumping and email-bombing targets)
 
 ## Endpoints
 
@@ -40,6 +40,7 @@ Verification:
 
 - Captcha verification is server-side only — never trust the client
 - Make captcha optional per-endpoint via configuration
+- Match `endpoints` against the **full request path** — exact equality, or an explicit `*` wildcard — never `includes`/`startsWith`. With substring matching, coverage becomes an accident of prefix overlap: `/sign-in` silently also gates `/sign-in/email-otp` and `/sign-in/social`, and a route you believed was protected goes unprotected the day its path stops overlapping. Normalize before comparing — strip the base path, collapse repeated slashes, drop any trailing slash — so `//sign-up/` cannot walk past an exact-match list.
 - Provider API calls should have a timeout (5 seconds)
 - If the provider API is unreachable, decide based on config: fail-open or fail-closed (default: fail-closed)
 - Log captcha failures for monitoring but do not expose provider details to the client

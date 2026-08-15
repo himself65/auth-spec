@@ -6,3 +6,5 @@ dist/
 *.tsbuildinfo
 coverage/
 .DS_Store
+
+__pycache__/
