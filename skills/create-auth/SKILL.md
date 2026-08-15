@@ -297,6 +297,7 @@ Before generating code, read **all** files in `references/pitfalls/` and follow 
 | Passwordless sign-in strips credentials | `references/pitfalls/pre-account-hijack-strip.md`   |
 | Async proofs bind to the value proven   | `references/pitfalls/async-proof-value-binding.md`  |
 | NULL owner must deny, not skip the gate | `references/pitfalls/nullable-owner-gate.md`        |
+| Authorize the value the handler acts on | `references/pitfalls/authorization-must-match-the-action.md` |
 
 ## Reference Implementations
 

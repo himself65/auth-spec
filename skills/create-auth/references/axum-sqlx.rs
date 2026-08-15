@@ -16,8 +16,8 @@
 
 use axum::{
     extract::{ConnectInfo, Json, State},
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    http::{header::CACHE_CONTROL, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
@@ -379,10 +379,20 @@ async fn sign_in(
     }).into_response()
 }
 
+// Every branch below builds its own response, so the header is applied once to whatever
+// comes back — the 401 included. Without it the browser disk-caches this GET and keeps
+// replaying "signed in" with a stale profile after the session has expired server-side.
 async fn get_session(
     State(pool): State<PgPool>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    let mut res = read_session(pool, headers).await;
+    res.headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    res
+}
+
+async fn read_session(pool: PgPool, headers: HeaderMap) -> Response {
     let Some(token) = extract_bearer_token(&headers) else {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     };
@@ -588,7 +598,13 @@ async fn password_reset_confirm(
 
         match row {
             Some((true,)) => {}
-            _ => return error_json(StatusCode::BAD_REQUEST, "invalid or expired token").into_response(),
+            // Commit before returning rather than dropping `tx`: the token was consumed
+            // inside this transaction and a spent link is never revived, even though the
+            // reset itself changes nothing.
+            _ => {
+                let _ = tx.commit().await;
+                return error_json(StatusCode::BAD_REQUEST, "invalid or expired token").into_response();
+            }
         }
 
         // The upsert also covers a verified row that carries no credential account yet (an
