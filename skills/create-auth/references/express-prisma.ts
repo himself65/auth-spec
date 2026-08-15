@@ -235,6 +235,10 @@ router.post("/sign-in", async (req: Request, res: Response) => {
 });
 
 router.get("/session", async (req: Request, res: Response) => {
+  // Set once, before any branch: this GET must never be disk-cached, or the browser
+  // keeps replaying "signed in" with a stale profile after the session has expired.
+  res.set("Cache-Control", "no-store");
+
   const token = req.headers.authorization?.replace("Bearer ", "");
   if (!token) {
     return res.status(401).json({ error: "Unauthorized" });

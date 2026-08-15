@@ -138,7 +138,13 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+
+# This GET must never be disk-cached, or the browser keeps replaying "signed in" with a
+# stale profile after the session has expired server-side. Declared once and applied on
+# both the 200 and the 401 — a raised HTTPException builds its own response, so it needs
+# the header passed explicitly rather than inheriting the one set below.
+NO_STORE = {"Cache-Control": "no-store"}
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -170,7 +176,11 @@ def send_verification_link(email: str, purpose: str, token: str) -> None:
     # (SES, Postmark, SMTP) — until you do, nothing is delivered and neither flow can
     # complete. This is the only place the raw token is allowed to exist; the database
     # holds nothing but its SHA-256, and the link must never be logged.
-    link = f"{APP_BASE_URL}/{purpose}?token={token}"
+    # Map purpose to a path explicitly rather than interpolating it — the reset page is
+    # /reset-password, not /password-reset, and the other reference implementations all
+    # mail that path.
+    path = "/reset-password" if purpose == "password-reset" else "/verify-email"
+    link = f"{APP_BASE_URL}{path}?token={token}"
     _ = (email, link)  # hand these to the transport you wire in here
 
 
@@ -309,18 +319,21 @@ async def sign_in(req: SignInRequest, request: Request, db: AsyncSession = Depen
 
 @router.get("/session", response_model=SessionResponse)
 async def get_session(
+    response: Response,
     authorization: str = Header(...),
     db: AsyncSession = Depends(get_db),
 ):
+    response.headers.update(NO_STORE)
+
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail="Unauthorized", headers=NO_STORE)
 
     result = await db.execute(select(Session).where(Session.token == token))
     session = result.scalar_one_or_none()
 
     if not session or session.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail="Unauthorized", headers=NO_STORE)
 
     result = await db.execute(select(User).where(User.id == session.user_id))
     user = result.scalar_one()
@@ -409,7 +422,9 @@ async def confirm_verify_email(req: VerifyEmailConfirmRequest, db: AsyncSession 
     )
 
     if proved.rowcount != 1:
-        await db.rollback()
+        # Commit, do not roll back: the token was consumed above and a spent link is
+        # never revived. Rolling back here would hand an attacker unlimited retries.
+        await db.commit()
         raise HTTPException(status_code=400, detail="Invalid or expired token")
 
     # No credential strip here: this link was issued by the very sign-up that set the
@@ -512,7 +527,9 @@ async def confirm_password_reset(
         user = result.scalar_one_or_none()
 
         if not user or user.email != verification.email:
-            await db.rollback()
+            # Commit, do not roll back: the token was consumed above and a spent link
+            # is never revived, even though this reset changes nothing else.
+            await db.commit()
             raise HTTPException(status_code=400, detail="Invalid or expired token")
 
         result = await db.execute(

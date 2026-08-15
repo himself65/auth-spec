@@ -182,9 +182,9 @@ export async function sendVerificationLink(
 }
 
 // --- app/api/auth/sign-up/route.ts ---
-import { db } from "@/lib/db";
+// `db` and `eq` are imported by the lib/verification.ts section above; in a real
+// project each file repeats the imports it uses.
 import { users, accounts, sessions } from "@/lib/schema";
-import { eq } from "drizzle-orm";
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 
@@ -332,7 +332,17 @@ export async function POST(request: Request) {
 }
 
 // --- app/api/auth/session/route.ts ---
+// A route handler builds a fresh response on every branch, so the header goes on
+// whatever comes back rather than being repeated at each return — that way the 401
+// carries it too. Without it the browser disk-caches this GET and keeps replaying
+// "signed in" with a stale profile after the session has expired server-side.
 export async function GET(request: Request) {
+  const res = await readSession(request);
+  res.headers.set("Cache-Control", "no-store");
+  return res;
+}
+
+async function readSession(request: Request) {
   const token =
     request.headers.get("authorization")?.replace("Bearer ", "") ?? null;
   if (!token) {

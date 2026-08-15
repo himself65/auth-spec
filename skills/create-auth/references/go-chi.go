@@ -343,6 +343,10 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
+	// Set once, before any branch: this GET must never be disk-cached, or the browser
+	// keeps replaying "signed in" with a stale profile after the session has expired.
+	w.Header().Set("Cache-Control", "no-store")
+
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if token == "" {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -565,6 +569,13 @@ func (h *AuthHandler) ConfirmPasswordReset(w http.ResponseWriter, r *http.Reques
 		if err := tx.QueryRowContext(r.Context(),
 			"SELECT email_verified FROM users WHERE id = $1 AND email = $2", userID, email,
 		).Scan(&emailVerified); err != nil || !emailVerified {
+			// Commit rather than falling through to the deferred rollback: the token
+			// was consumed inside this transaction and a spent link is never revived,
+			// even though the reset itself changes nothing.
+			if err := tx.Commit(); err != nil {
+				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+				return
+			}
 			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusBadRequest)
 			return
 		}

@@ -1,7 +1,7 @@
 {
   "name": "auth",
   "version": "6.0.0",
-  "description": "Auth skills for Claude Code — scaffold auth endpoints, review auth code for security issues, and add conformance tests",
+  "description": "Auth skills for Claude Code — scaffold hand-rolled auth endpoints and audit auth code against security best practices",
   "author": {
     "name": "himself65"
   },

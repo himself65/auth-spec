@@ -123,6 +123,7 @@ Notify the user that they were added, on top of the audit entry — silent place
 - Slugs: lowercase, alphanumeric + hyphens, 3-48 chars
 - Role hierarchy: owner > admin > member
 - Users can only modify roles below their own level
+- Every route touching an organization resolves the organization id **once** and calls one shared predicate (`canManageOrg(userId, orgId)`) — including the create route, which is the one that drifts to a weaker rule than its siblings. See `references/pitfalls/authorization-must-match-the-action.md`
 - There must always be at least one owner
 - Membership and role grants have exactly one implementation — org creation, invitation acceptance, any automatic provisioning (SSO domain auto-join, directory sync), the admin console, and seed or backfill scripts all call it, and it owns the role-hierarchy check, the least-privilege default, and the audit record. Grep for direct inserts into OrganizationMember: each one is a side door around all three, and the `(organizationId, userId)` unique constraint — not an "is already a member" read before the insert — is what settles two concurrent grants.
 - Invitation tokens are crypto-random (32 bytes), stored hashed, single-use (consumed atomically)

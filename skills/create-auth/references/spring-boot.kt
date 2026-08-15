@@ -13,6 +13,7 @@ package com.example.auth
 
 import jakarta.persistence.*
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
@@ -307,7 +308,15 @@ class AuthController(
     }
 
     @GetMapping("/session")
-    fun getSession(@RequestHeader("Authorization") auth: String): SessionResponse {
+    fun getSession(
+        @RequestHeader("Authorization") auth: String,
+        response: HttpServletResponse,
+    ): SessionResponse {
+        // Set once on the servlet response, before any branch, so it survives the
+        // thrown 401 as well: this GET must never be disk-cached, or the browser keeps
+        // replaying "signed in" with a stale profile after the session has expired.
+        response.setHeader("Cache-Control", "no-store")
+
         val token = auth.removePrefix("Bearer ").trim()
         if (token.isBlank()) {
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")
@@ -359,7 +368,10 @@ class AuthController(
     }
 
     @PostMapping("/verify-email/confirm")
-    @Transactional
+    // noRollbackFor: a thrown 4xx here must not roll the transaction back. The token is
+    // consumed inside it, and a spent link is never revived — rolling back would hand an
+    // attacker unlimited retries. Genuine 500-class failures still roll back.
+    @Transactional(noRollbackFor = [ResponseStatusException::class])
     fun confirmVerifyEmail(@RequestBody req: VerifyEmailConfirmRequest): StatusResponse {
         val now = Instant.now()
 
@@ -404,7 +416,10 @@ class AuthController(
     }
 
     @PostMapping("/password-reset/confirm")
-    @Transactional
+    // noRollbackFor: a thrown 4xx here must not roll the transaction back. The token is
+    // consumed inside it, and a spent link is never revived — rolling back would hand an
+    // attacker unlimited retries. Genuine 500-class failures still roll back.
+    @Transactional(noRollbackFor = [ResponseStatusException::class])
     fun confirmPasswordReset(@RequestBody req: PasswordResetConfirmRequest): StatusResponse {
         // Validate before touching the token: a rejected password must not burn the link
         if (req.password.length < 8) {
