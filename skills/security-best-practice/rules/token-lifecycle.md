@@ -17,11 +17,14 @@ Email-verification links, password-reset links, magic links, OTPs, invitation to
 | Generation | Cryptographically random, ≥ 128 bits entropy (32 hex / 22 base64url). For numeric OTP: 6–8 digits. Never time-derived, sequential, or predictable. |
 | Storage | Store a **hash** of the token (SHA-256) server-side, not the raw token. Compare using constant-time equality. A DB dump must not yield reusable tokens. |
 | One-time use | Mark consumed on first successful use — **atomically**. Use a single conditional write (`UPDATE … WHERE token_hash = ? AND consumed_at IS NULL`, or `DELETE … RETURNING`) and proceed only when exactly one row changed. A find-then-update sequence is a race: concurrent requests both pass the check and the token is consumed twice (two sessions from one magic link, one reset link changing the password twice). Subsequent attempts fail even within the TTL. |
+| Order of operations | Run every check that does not depend on the token — password policy, field shapes, size limits — **before** the atomic consume, and perform the state change immediately after it. Anything fallible in between spends the credential on a user error and forces a fresh issuance round trip. Ordering only: a wrong or expired token still counts against the attempt cap below. |
 | Short TTL | Reset: ≤ 30 min. Email verification: ≤ 24 h. Magic link: ≤ 15 min. OTP: ≤ 10 min (shorter is better). Invitations: ≤ 7 days. Enforce server-side — don't trust a JWT `exp`. |
 | Scope binding | Token stores the `userId` (and `action` — "reset", "verify", "invite"). Reject cross-type use (a "verify" token cannot complete a reset). |
 | Invalidate on state change | Password change / MFA change / email change must invalidate **all** outstanding tokens for that user. |
 | Invalidate siblings on use | Using one reset token invalidates all other pending reset tokens for that account. |
 | Delivery channel binding | A token emailed to `foo@example.com` should only be usable to act on the account whose current email is `foo@example.com` at consumption time, not just at issuance. Otherwise an attacker who emails-change mid-flow races the token. |
+| Bind async proofs to the value proved | When ownership is proved by an external round trip (DNS TXT, `.well-known` fetch, SMS/email echo, webhook callback), the write that records the proof must name the proven value **and** the row's immutable primary key: `UPDATE … SET verified = true WHERE id = $1 AND domain = $2`. Guarding on a re-registrable business key (`providerId`, slug) lets the record be deleted and re-registered mid-flight. Zero rows changed means the subject mutated: discard the proof, return `409`, do not retry the write. Any update to the proven value clears the verified flag in the same statement. |
+| Proof outranks pre-existing credentials | When a magic-link or OTP token proves control of an identifier and resolves to an **existing, never-verified** account, delete that account's credentials and revoke its sessions *before* marking it verified and issuing the session — one transaction, gated on the verified flip as a conditional write. Otherwise a password planted on the unverified row (open registration + enumeration-safe sign-up) survives the owner's first sign-in: pre-account hijacking, CWE-287. Requiring verification before password sign-in does not help — the passwordless proof is what lifts that gate. The dedicated confirm-your-email link is exempt; it confirms the password its own sign-up set. |
 | Rate-limit issuance | See `rate-limiting.md`. Cap requests per account, per IP, and global — both to prevent enumeration and to prevent email/SMS bombardment. |
 | Constant-time lookup | Lookup by token-hash returns the same latency whether found or not. Don't branch on existence before hashing. |
 | Don't log tokens | No raw tokens in application logs, error logs, or third-party error trackers. Log only the token ID (a non-sensitive UUID) for support. |
@@ -41,9 +44,12 @@ Email-verification links, password-reset links, magic links, OTPs, invitation to
 
 | Check | Requirement |
 |-------|------------|
+| Something must set the flag | If the schema carries a verified flag, exactly one thing may set it: proof of control over the address at that moment — a consumed verification link, or a completed magic-link / email-OTP sign-in. A flag nothing can set is permanently `false`, and every gate that reads it (org invitations, step-up, recovery) fails closed without ever saying so. |
+| Reap unverified accounts | An account whose address was never verified must be deleted on a short TTL (24–72 h, never shorter than the verification link's TTL). An unverified row holding an address is a reservation an attacker can make against any address — the precondition for pre-account hijacking. Carve-out: a row that reserves no address — `email` NULL or a `*.placeholder.invalid` placeholder — survives on whatever identifier it did prove (`phoneVerified`). A row holding a real, unverified address is reaped regardless of any other proof; only verifying that address saves it. |
 | Pending email change | Store the new email separately until verified. Don't update the primary email until the new address confirms. |
 | Verify both sides on email change | Send a "you requested to change" notice to the **old** email (with a cancel link), and a "confirm" link to the **new** email. Otherwise an attacker who temporarily controls the session can silently change email. |
 | Email change invalidates tokens/sessions | On email change completion, invalidate all sessions and pending reset/verification tokens; require re-login. |
+| Changing a verified value voids its proof | A verified flag is a claim about the value stored at that instant, not a property of the row. Prefer the pending-change pattern above; where a value can still be edited directly (admin tool, profile `PATCH`, imported record), the write that changes `email`, `phoneNumber`, or any other attribute you later trust must set its verified flag to `false` in the **same statement** — not in a follow-up query an early return or a crash can skip. Stronger: key the proof to the value (a row per `(userId, normalizedValue)`) so a new value cannot inherit an old proof. One flag must never cover a **list** of values — proving one entry marks them all trusted, and an entry added later inherits the proof. |
 
 ### Checklist — Magic Link
 
@@ -101,6 +107,10 @@ async function issueReset(email) {
 }
 
 async function confirmReset(raw, newPassword) {
+  // Stateless checks first — a policy failure here must not burn the token.
+  if (newPassword.length < 8 || newPassword.length > 4096) {
+    throw new HttpError(400, 'Password does not meet requirements');
+  }
   const hash = crypto.createHash('sha256').update(raw).digest('hex');
   // Atomic consume: one conditional write, gated on the row count. A
   // find-then-update sequence lets two concurrent requests both pass the
@@ -126,3 +136,4 @@ async function confirmReset(raw, newPassword) {
 - [OWASP Forgot Password Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html)
 - [OWASP Authentication Cheat Sheet — Password Recovery](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html#password-reset)
 - [NIST SP 800-63B — Memorized Secret Verifier Recovery](https://pages.nist.gov/800-63-4/sp800-63b.html)
+- [Sudhodanan & Paverd — "Pre-hijacking Attacks on Web User Accounts" (USENIX Security 2022)](https://www.usenix.org/conference/usenixsecurity22/presentation/sudhodanan)

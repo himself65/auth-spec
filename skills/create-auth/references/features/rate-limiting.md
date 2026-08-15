@@ -50,10 +50,13 @@ The rate limit key determines what is being throttled. Use the pattern `rl:{endp
 
 ### IP Address Extraction
 
-Extract the client IP from request headers in this order:
-1. `X-Forwarded-For` (first value — the client IP before proxies)
-2. `X-Real-IP`
-3. Direct connection IP (socket remote address)
+`X-Forwarded-For` is request content, not a fact. An *appending* proxy leaves the leftmost token exactly as the client sent it, so `xff.split(",")[0]` is forgeable even behind a load balancer you own — a caller rotates it and gets a fresh bucket on every request. Resolve the client IP in this order:
+
+1. A single-valued header your proxy **overwrites** (`X-Real-IP`, `CF-Connecting-IP`), when one is configured
+2. Otherwise `X-Forwarded-For` walked **right-to-left** past your own proxy IPs/CIDRs (or a configured hop count), taking the first untrusted hop
+3. Otherwise the socket remote address — over-broad but unforgeable
+
+Steps 1 and 2 only hold if the origin is unreachable except through those proxies.
 
 **Normalize IPv6:** Convert IPv4-mapped IPv6 addresses (like `::ffff:192.168.1.1`) to their IPv4 form. This prevents bypass attacks where the same client appears as two different IPs.
 
@@ -78,7 +81,13 @@ function rateLimitMiddleware(kvCache, config) {
       return next(request)
     }
 
-    const { count, windowStart } = JSON.parse(entry)
+    // Corrupt entry (truncated, foreign write, the string "null") — treat as a fresh window, never throw
+    const parsed = tryParseJSON(entry)
+    if (!parsed || typeof parsed.count !== "number" || typeof parsed.windowStart !== "number") {
+      await kvCache.set(key, JSON.stringify({ count: 1, windowStart: now() }), config.windowSeconds)
+      return next(request)
+    }
+    const { count, windowStart } = parsed
 
     if (count >= config.max) {
       // Over limit
@@ -136,9 +145,10 @@ Setting an endpoint to `false` or `null` disables rate limiting for that endpoin
 - **Always include `Retry-After` header** on 429 responses. This is required by HTTP spec (RFC 6585) and expected by well-behaved clients.
 - **Make limits configurable.** Use environment variables or a config object — don't hardcode window sizes and max counts into the middleware.
 - **Don't rate limit `GET /session`** — it's read-only and already token-protected. Rate limiting it would add latency to every authenticated page load.
-- **Fail open.** If the KV cache is unavailable (Redis down, database timeout), allow the request through. Blocking legitimate users is worse than temporarily losing rate limiting. Log the error for monitoring.
+- **Fail open.** If the KV cache is unavailable (Redis down, database timeout), allow the request through. Blocking legitimate users is worse than temporarily losing rate limiting. Log the failure loudly for monitoring. Code-verification counters (OTP, 2FA) fail **closed** instead.
 - **Don't use distributed locking.** A few extra requests sneaking through during a race condition between cache read and write is fine. Auth rate limits are approximate by nature.
-- **IP behind proxies.** Document that the user must configure their reverse proxy (nginx, Cloudflare, etc.) to set `X-Forwarded-For` correctly. If `X-Forwarded-For` is absent, fall back to the connection IP — but warn that rate limiting may not work correctly behind a proxy without this header.
+- **Await the counter write before responding.** The limiter's `set` is not fire-and-forget. On serverless and edge runtimes the instance can be frozen the moment the response is returned, so an unawaited increment may never reach the store and the next request sees a stale count. Only genuinely best-effort work may be deferred, and only through a mechanism the platform guarantees — `waitUntil`, a queue, or cron — with an awaited fallback when none is configured.
+- **IP behind proxies.** Document which trusted client-IP header the limiter reads and require the user to configure their reverse proxy (nginx, Cloudflare, etc.) to set it. A limiter left reading raw `X-Forwarded-For` is silently bypassable — worse than no limiter, because it looks like it works. With no trusted header configured, fall back to the connection IP and warn that limits will be coarser behind a proxy.
 
 ## Best Practices (Industry Consensus)
 

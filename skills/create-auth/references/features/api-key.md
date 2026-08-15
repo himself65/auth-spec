@@ -40,7 +40,7 @@ The hash function and key generation logic should be extracted into a shared uti
 
 **POST /api/auth/api-keys**
 
-- Requires valid session (Bearer token)
+- Requires valid session (Bearer token) **and a proven primary identifier** — `emailVerified` for an email account, `phoneVerified` for a phone-only one
 - Body: `{ name, scopes?, expiresAt? }`
 - Generate key, store SHA-256 hash + prefix
 - Return `{ id, name, key, prefix, scopes, expiresAt, createdAt }`
@@ -79,9 +79,10 @@ The hash function and key generation logic should be extracted into a shared uti
 - Never store the plaintext API key — only store the SHA-256 hash
 - The prefix is stored separately for efficient lookups (avoids hashing every request against all keys)
 - Use SHA-256 (not bcrypt) for API key hashing — keys are high-entropy so brute force is not practical, and lookup speed matters
-- Update `lastUsedAt` on each successful authentication (fire-and-forget to avoid latency)
+- Update `lastUsedAt` on each successful authentication. This is telemetry, not an access-control gate, so it is the one write that may be fire-and-forget to avoid latency — but on serverless/edge defer it through the platform's `waitUntil` (or equivalent), not a bare floating promise, or it is dropped when the instance freezes at response time. Never defer the checks that decide the 401.
 - Scopes are optional — if present, they restrict what the key can access
 - A user should have a max of 25 active API keys
+- Creating a key requires a proven primary identifier, not just a live session — an API key is a bearer credential that outlives the session that minted it and is untouched by password reset, so an account that has proven no identifier at all must not be able to mint one
 - API key auth should work alongside session auth (check both)
 - Extract hash/generation into a shared utility — do not duplicate across router and middleware
 

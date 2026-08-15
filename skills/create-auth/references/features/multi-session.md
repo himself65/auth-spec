@@ -36,6 +36,8 @@ None — the core **Session** table already includes nullable `userAgent` and `i
 - The "delete all" endpoint preserves the current session for safety
 - Session listing should only return non-expired sessions
 - Order sessions by createdAt descending (most recent first)
+- Implement "delete all" as one set-based delete keyed on userId and excluding the current session id (`DELETE FROM session WHERE user_id = $1 AND id <> $2`), not a loop over the listing results — a listing that comes back short (a bad row, pagination, a stale cache) would leave sessions alive while the response still reports `{ revoked: n }`
+- If sessions are also cached or mirrored outside the session table, revoke from every store and report success only once all of them succeeded — a failed read of one store must not skip the delete against the other
 
 ## Best Practices (Industry Consensus)
 

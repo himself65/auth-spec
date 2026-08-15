@@ -57,7 +57,7 @@ Use a dedicated table in the project's existing database. Good for multi-instanc
 - `get`: SELECT where key matches AND expiresAt > now. Return `null` if no row.
 - `set`: UPSERT (insert or update on conflict) with the new value and expiresAt.
 - `delete`: DELETE where key matches.
-- **Cleanup**: Periodically delete rows where `expiresAt < now`. This can be a cron job, a background task, or done lazily on write operations (e.g., delete expired rows in the same transaction as the upsert, but only every Nth write to avoid overhead).
+- **Cleanup**: Periodically delete rows where `expiresAt < now`. This can be a cron job, a platform-guaranteed background task (`waitUntil` / a queue), or done lazily on write operations (e.g., delete expired rows in the same transaction as the upsert, but only every Nth write to avoid overhead). Don't leave the sweep as a bare unawaited promise on the request path — on serverless the instance is frozen once the response returns and the sweep never runs, letting the table grow without bound. Await it when no guaranteed background mechanism is configured. Correctness never depends on the sweep (`get` already filters on `expiresAt > now`); only storage growth does.
 
 **Tradeoffs:**
 - Shared across all server instances
@@ -97,6 +97,9 @@ Features are responsible for constructing their own keys. The KV cache itself is
 - **Always async.** Even the in-memory backend should use async signatures for interface consistency — it lets users swap backends without changing callsites.
 - **TTL is mandatory on `set`.** There is no "store forever" default. Callers must specify a TTL. This prevents accidental memory/storage leaks.
 - **Values are strings.** Serialize complex data with `JSON.stringify` / equivalent. Don't add generics or type parameters to the interface — keep it dead simple.
+- **A value that comes back unparseable is not a value.** Entries can be truncated by an eviction, overwritten by other tooling, or hold the literal string `"null"` — which is truthy, so a `if (value)` guard passes it through, and `JSON.parse("null")` then yields `null`. Guard every deserialize: a parse failure, a `null`, or a wrong-shaped result must be handled as the feature's failure case (see **Graceful degradation** below), never allowed to throw out of the caller or flow onward as real data.
+- **One segment shape per key prefix.** Key segments are user-controlled (emails, IPs, user IDs), so a prefix that holds an IP for one caller and an email for another collides — an attacker who registers the username `192.168.1.1` then shares a victim IP's `lockout:` counter, and can drain or reset it. Fix one shape per prefix, or hash the variable segment. A charset allow-list is the wrong tool here: the key patterns above legitimately contain `@`, `.`, and `:`.
+- **Never enumerate the keyspace.** The interface has no list-by-prefix on purpose. A maintenance sweep or test-only `clear()` in a backend adapter must page with a cursor (Redis `SCAN`, never `KEYS`) and escape `* ? [ ] \` before interpolating into a `MATCH` glob — an unescaped pattern deletes keys this store does not own.
 - **Thread/concurrency safety.** The in-memory backend must handle concurrent access correctly (not a concern in single-threaded JS, but important in Go/Rust/Python with threads). Use a mutex/lock or concurrent data structure.
 - **No distributed locking.** The KV cache is not a distributed lock. Don't try to build one on top of it. For rate limiting, approximate counts are fine — a few extra requests slipping through during a race is acceptable.
 - **Create the KV cache as a standalone module/file.** Don't inline it into the rate limiter or any specific feature. It should be importable by any feature that needs it.
@@ -121,7 +124,7 @@ For the database backend, reuse the project's existing database connection — d
 ## Best Practices
 
 - **Keep TTLs short for security data.** Rate limit windows: 1–60 minutes. OTP codes: 5–10 minutes. Don't cache auth data for hours.
-- **Don't cache sensitive secrets.** Session tokens, passwords, and encryption keys should not go through the KV cache. It's for counters, temporary tokens, and flags.
+- **Don't cache sensitive secrets.** Passwords and encryption keys never go through the KV cache — it's for counters, temporary tokens, and flags. Session snapshots are a constrained opt-in, not a flat ban: caching one buys a revocation lag equal to its TTL, so the session table stays the default authority and any cached read must satisfy `skills/security-best-practice/rules/session-security.md` (**Cached session snapshots**) — low-consequence reads only, embedded expiry verified, the entry dropped in the same operation that revokes.
 - **Monitor memory in production.** For in-memory backends under high traffic, keep an eye on memory usage. If keys accumulate faster than they expire, add a periodic sweep or switch to Redis/database.
 - **Graceful degradation.** If the KV backend is unavailable (Redis down, database unreachable), decide per-feature: rate limiting should fail-open (allow the request) to avoid blocking legitimate users. OTP verification should fail-closed (reject) to maintain security.
 

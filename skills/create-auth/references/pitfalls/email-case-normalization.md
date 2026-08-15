@@ -15,4 +15,6 @@ const normalizeEmail = (raw: string) => raw.trim().toLowerCase();
 const email = normalizeEmail(req.body.email);
 ```
 
+Lowercasing is not validation. `attacker@corp.com@evil.com` survives `trim().toLowerCase()` untouched, and any later `email.split('@')[1]` reads its domain as `corp.com` even though the mail is delivered to `evil.com`. Reject the address at the boundary — exactly one `@`, a non-empty local part, and a host part with no `/`, `\`, `:`, whitespace, or trailing dot — so a malformed address is never persisted in the first place. If anything downstream ever derives a trust decision from the domain (routing a corporate domain to an organization, say), run both sides through that same parser and match on label boundaries — `d === base || d.endsWith('.' + base)` — because a bare `endsWith(base)` accepts `notacme.com` for `acme.com`, and suffix matching means the apex grants every subdomain under it.
+
 RFC 5321 technically allows a case-sensitive local part; no real mail system honors it, and every major auth provider lowercases. If the project already has mixed-case rows, backfill them (and resolve duplicates) before relying on the lowercased unique index.
