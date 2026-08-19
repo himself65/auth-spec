@@ -8,7 +8,7 @@ Passwordless authentication via emailed one-time links.
 | Field     | Type     | Constraints                    |
 |-----------|----------|--------------------------------|
 | id        | string   | primary key                    |
-| email     | string   | not null (stored lowercased)   |
+| email     | string   | not null (stored in canonical form) |
 | tokenHash | string   | unique, not null (SHA-256 of the raw token) |
 | expiresAt | datetime | not null (default: 15 minutes) |
 | createdAt | datetime | default now                    |
@@ -16,7 +16,7 @@ Passwordless authentication via emailed one-time links.
 ## Endpoints
 
 **POST /api/auth/magic-link/send**
-- Body: `{ email, callbackUrl? }` (normalize the email: trim + lowercase)
+- Body: `{ email, callbackUrl? }` (canonicalize the email through the shared helper — NFKC, trim, lowercase — before any lookup; see `references/pitfalls/email-case-normalization.md`)
 - Generate a crypto-random token (min 32 bytes, URL-safe base64)
 - Store the SHA-256 hash of the token with 15-minute expiry — the raw token exists only inside the emailed link
 - Send email with link: `{callbackUrl}?token={token}` (or a default callback)

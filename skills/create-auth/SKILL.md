@@ -135,7 +135,7 @@ Create these tables/models:
 | Field | Type | Constraints |
 |----------------|----------|----------------------|
 | id | string | primary key |
-| email | string | unique, not null (store lowercased) |
+| email | string | unique, not null (store the canonical form — see sign-up) |
 | name | string | nullable |
 | image | string | nullable |
 | emailVerified | boolean | default false |
@@ -187,8 +187,8 @@ One table serves both flows; `purpose` keeps them apart and MUST be matched at r
 **POST /api/auth/sign-up**
 
 - Body: `{ email, password, name? }`
-- Normalize the email (trim + lowercase) before validation and any lookup — see `references/pitfalls/email-case-normalization.md`
-- Validate email format and password length (min 8 chars)
+- Canonicalize the email **before** validating it (NFKC where the stdlib has it, then trim, then lowercase), then validate the canonical string and store exactly that string — see `references/pitfalls/email-case-normalization.md`
+- Validate the canonical string against a **strict shape**, not a permissive one: a lowercase RFC 5322 dot-atom local part, dot-separated `[a-z0-9-]` domain labels, exactly one `@`, ≤ 254 chars — no quotes, comments, angle brackets, commas, spaces, or non-ASCII (internationalized addresses only if the project deliberately supports them). Anything a mail library could re-parse into a *different* recipient — `a(b)@x`, `"a"@x`, `x<attacker@evil>`, `a,b@x` — is rejected rather than stored. Then validate password length (min 8 chars)
 - Hash password with a strong algorithm (bcrypt, argon2, or scrypt — use whichever is idiomatic for the language)
 - Create User + Account (providerId: "credential", accountId: the new user's id) + Session
 - Record `ipAddress` and `userAgent` on the session (`User-Agent` header; client IP from the trusted proxy header when deployed behind one, otherwise the socket address)
@@ -199,7 +199,7 @@ One table serves both flows; `purpose` keeps them apart and MUST be matched at r
 **POST /api/auth/sign-in**
 
 - Body: `{ email, password }`
-- Normalize the email (trim + lowercase) before lookup
+- Canonicalize the email through the same helper sign-up uses (NFKC, trim, lowercase) before lookup
 - Look up user by email, verify password hash
 - Create new Session (record `ipAddress` and `userAgent` as in sign-up)
 - Return session token and user (without password)
@@ -220,9 +220,9 @@ One table serves both flows; `purpose` keeps them apart and MUST be matched at r
 
 **POST /api/auth/verify-email/send**
 
-- Body: `{ email }` (normalize before lookup). Sign-up calls this internally on success; the route itself exists for resends
+- Body: `{ email }` (canonicalize through the sign-up helper before lookup). Sign-up calls this internally on success; the route itself exists for resends
 - Delete the user's outstanding `"verify-email"` tokens, then issue one: ≥32 bytes crypto-random, store only its SHA-256, `expiresAt` ≤ 24 h
-- Email the link. Return 200 **always**, whether or not the address has an account — this endpoint must not reveal which addresses are registered
+- Email the link, built on a **configured** public base URL — never on the request's `Host` / `X-Forwarded-Host`, which the caller controls (reset-link poisoning; see `references/pitfalls/oauth-redirect-request-url.md`). Return 200 **always**, whether or not the address has an account — this endpoint must not reveal which addresses are registered
 - Rate limit per address and per IP (3 per hour is reasonable) — it sends mail on demand
 
 **POST /api/auth/verify-email/confirm**
@@ -236,7 +236,7 @@ One table serves both flows; `purpose` keeps them apart and MUST be matched at r
 
 **POST /api/auth/password-reset/request**
 
-- Body: `{ email }` (normalize before lookup)
+- Body: `{ email }` (canonicalize through the sign-up helper before lookup)
 - Same contract as `verify-email/send`: delete outstanding `"password-reset"` tokens, issue one with `expiresAt` ≤ 30 min, return 200 **always**, rate limit per address and per IP
 
 **POST /api/auth/password-reset/confirm**
@@ -258,9 +258,9 @@ One table serves both flows; `purpose` keeps them apart and MUST be matched at r
 - Use constant-time comparison for password verification (the hashing library handles this)
 - Set session expiry to 7 days by default
 - Return generic "Invalid credentials" on sign-in failure — do not reveal whether the email exists
-- **Normalize emails at the boundary**: trim + lowercase every email arriving in any request (core endpoints and feature endpoints alike) before validation, lookup, or insert, and store only the normalized form. Never compensate at query time with `LOWER()`/`ILIKE`
+- **Canonicalize emails at the boundary, then validate the canonical string**: every email arriving in any request (core endpoints and feature endpoints alike, and an address arriving in an IdP profile or claim) goes through one helper — NFKC-normalize where the standard library offers it (`String.prototype.normalize`, `unicodedata.normalize`, `java.text.Normalizer`), trim, lowercase — **before** any validation, lookup, or insert, and only the canonical form is stored. Validation runs on that string, never on the raw input: an address holding a fullwidth `＠` (U+FF20) passes a single-`@` check on the raw bytes, then a mail library that normalizes recipients on its own sees two separators and delivers the sign-in link somewhere else (CWE-180, validate-before-canonicalize; Auth.js shipped it as GHSA-7rqj-j65f-68wh). The string you validated is the string you store and the string you hand to the mailer — which is also why the shape check is strict (lowercase dot-atom, see sign-up): a mailer that re-parses `a(b)@x` or `x<attacker@evil>` into a different recipient breaks that promise even after perfect canonicalization. Reject non-ASCII outright unless the project deliberately supports internationalized addresses — that is what closes the homoglyph hole in a language without stdlib NFKC (Go, Rust). Never compensate at query time with `LOWER()`/`ILIKE`
 - **Never synthesize a routable email**: if a sign-up path has no email (Phone Number), prefer making the `email` column nullable. If it must stay non-null, mint the placeholder under the RFC 6761 reserved `.invalid` TLD, namespaced by source — `<stable-identifier>@<source>.placeholder.invalid` — never a domain anyone can receive mail at. A placeholder is never itself a proven identifier: leave `emailVerified` false permanently, never send mail to it, and let `phoneVerified` carry that account's proof. **A row is _phone-only_ — the qualifier the reaper and the enrolment gate below both hinge on — exactly when its `email` is NULL or such a `*.placeholder.invalid` placeholder; on a row holding a real address only `emailVerified` counts as proof.** The `create or find User` step in Magic Link and Email OTP must skip placeholder rows — otherwise a magic link requested for a guessed placeholder address signs the attacker in as that user. Trading a placeholder for a real address requires a full verification cycle.
-- **Consume single-use tokens atomically**: any single-use credential a feature adds (OTP codes, magic-link/reset tokens, 2FA challenges, invitations) must be consumed with a single conditional write, not find-then-update — see `references/pitfalls/single-use-token-race.md`
+- **Consume single-use tokens atomically**: any single-use credential a feature adds (OTP codes, magic-link/reset tokens, 2FA and passkey challenges, invitations, authorization codes) must be consumed with a single conditional write, not find-then-update — in a database that is `UPDATE … WHERE consumed_at IS NULL` / `DELETE … RETURNING` with the row count checked; in a KV store it is `getAndDelete`, never `get` followed by `delete`. Counters that gate anything (attempt caps, lockouts, rate limits) are bumped with an atomic `increment`, never read-modify-write — see `references/pitfalls/single-use-token-race.md` and the interface in `references/features/kv-cache.md`
 - **Reap the rows that never prove an identifier**: `emailVerified` is read as an authorization input (`references/features/organization.md` gates invitation acceptance on it, and the enrolment gate below turns on it), so it is set at exactly one kind of moment — proven control of the mailbox: the core `verify-email/confirm` endpoint, a completed password reset, or a successful magic-link / email-OTP verification. Never set it from an unverified IdP claim. Then, via a scheduled job, delete the accounts that have proven **no** primary identifier at all — no `emailVerified`, and `phoneVerified` rescues a row only when that row is phone-only — on a short TTL (24–72 hours, and never shorter than the verification link's own expiry). A row holding a real, unverified address is reaped even if `phoneVerified` is true, or the job stops clearing exactly what it exists to clear: an unverified row holding an address is a reservation an attacker can make against any address, and it is what makes pre-account hijacking practical.
 - **An unverified account may hold nothing but a password**: sign-up mints a session on a user whose `emailVerified` is still false, and that session proves possession of a password, not of the mailbox. Every endpoint that enrolls a durable authenticator — passkey registration, 2FA enable, API-key creation — must additionally require a proven primary identifier: `emailVerified = true`, or `phoneVerified = true` on a phone-only row as defined above. Otherwise whoever plants an account at an address its owner has not yet claimed leaves behind persistence that outlives the password.
 - **Route every session-minting path through one sign-up gate**: password sign-up/sign-in, magic-link verify, email/phone OTP verify, and any OAuth or embedded one-tap callback all end with "a session now exists for this identity". They must reach the User row through a single shared function that decides whether this identity may register at all, whether its email domain is permitted, and whether it may attach to an existing User. Each feature's "create or find User" step is a call into that function, never its own reimplementation — otherwise the newest passwordless endpoint becomes a back door around the rules sign-up enforces. Where a per-feature setting overlaps the global one the more restrictive value wins: a feature toggle may tighten policy, never loosen it
@@ -282,7 +282,7 @@ Before generating code, read **all** files in `references/pitfalls/` and follow 
 | --------------------------------------- | --------------------------------------------------- |
 | API routes must catch DB errors         | `references/pitfalls/api-error-handling.md`         |
 | Sign-up catch must not re-throw         | `references/pitfalls/signup-rethrow.md`             |
-| Auth helpers must not throw             | `references/pitfalls/auth-helpers-no-throw.md`      |
+| Auth helpers return `null`, never throw or a truthy error | `references/pitfalls/auth-helpers-no-throw.md` |
 | Client must handle non-JSON             | `references/pitfalls/client-json-parsing.md`        |
 | OAuth redirect must not use request.url | `references/pitfalls/oauth-redirect-request-url.md` |
 | API key hash/gen must not be duplicated | `references/pitfalls/api-key-shared-utils.md`       |
@@ -291,7 +291,7 @@ Before generating code, read **all** files in `references/pitfalls/` and follow 
 | MCP 401 / recoverable 403 need `resource_metadata` | `references/pitfalls/mcp-www-authenticate.md` |
 | MCP `.well-known` must mount at root    | `references/pitfalls/mcp-discovery-mounting.md`     |
 | Single-use tokens consume atomically    | `references/pitfalls/single-use-token-race.md`      |
-| Emails normalize at the boundary        | `references/pitfalls/email-case-normalization.md`   |
+| Emails canonicalize, then validate       | `references/pitfalls/email-case-normalization.md`   |
 | Set-Cookie must survive error paths     | `references/pitfalls/set-cookie-on-error.md`        |
 | OAuth links key on provider+account id  | `references/pitfalls/oauth-account-linking.md`      |
 | Passwordless sign-in strips credentials | `references/pitfalls/pre-account-hijack-strip.md`   |

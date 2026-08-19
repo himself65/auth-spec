@@ -79,17 +79,20 @@ class VerificationToken(Base):
 
 
 # --- schemas.py ---
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
+# Plain str on purpose: the email is canonicalized and validated by normalize_email /
+# is_valid_email in routes.py, never by a schema validator (EmailStr) that would run on
+# the raw input first — validate-before-canonicalize is CWE-180.
 class SignUpRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     name: str | None = None
 
 
 class SignInRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 
@@ -112,7 +115,7 @@ class SessionResponse(BaseModel):
 
 
 class VerifyEmailSendRequest(BaseModel):
-    email: EmailStr
+    email: str
 
 
 class VerifyEmailConfirmRequest(BaseModel):
@@ -120,7 +123,7 @@ class VerifyEmailConfirmRequest(BaseModel):
 
 
 class PasswordResetRequest(BaseModel):
-    email: EmailStr
+    email: str
 
 
 class PasswordResetConfirmRequest(BaseModel):
@@ -134,7 +137,9 @@ class StatusResponse(BaseModel):
 
 # --- routes.py ---
 import hashlib
+import re
 import secrets
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -169,6 +174,30 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+# Canonicalize before validating (CWE-180): NFKC first, so a homoglyph such as a
+# fullwidth ＠ (U+FF20) is folded before the single-@ check runs, and the string we
+# validate is the exact string we store and mail — a mailer that normalizes on its own
+# must never see something different from what we checked. Non-ASCII that survives is then
+# rejected outright: this reference does not support internationalized addresses.
+def normalize_email(raw: str) -> str:
+    return unicodedata.normalize("NFKC", raw).strip().lower()
+
+
+# Strict lowercase RFC 5322 dot-atom on both sides — no quotes, comments, angle brackets,
+# commas, spaces, or non-ASCII — so no mail library can re-parse the string we validated
+# into a different recipient. Exactly one "@", ≤ 254 chars. Uppercase is rejected on
+# purpose: the validator then fails closed on anything that skipped normalize_email.
+# IP-literal domains (`user@[127.0.0.1]`) are not accepted.
+_EMAIL_SHAPE = re.compile(
+    r"[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+    r"@[a-z0-9-]+(?:\.[a-z0-9-]+)*"
+)
+
+
+def is_valid_email(email: str) -> bool:
+    return len(email) <= 254 and _EMAIL_SHAPE.fullmatch(email) is not None
 
 
 def send_verification_link(email: str, purpose: str, token: str) -> None:
@@ -211,11 +240,11 @@ async def issue_verification_token(
 
 @router.post("/sign-up", response_model=AuthResponse)
 async def sign_up(req: SignUpRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    # Normalize email before validation and storage
-    email = req.email.strip().lower()
+    # Canonicalize email before validation and storage
+    email = normalize_email(req.email)
 
-    if len(req.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not is_valid_email(email) or len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Invalid email or password (min 8 chars)")
 
     # Always hash password to prevent timing-based email enumeration
     hashed = hash_password(req.password)
@@ -276,8 +305,8 @@ async def sign_up(req: SignUpRequest, request: Request, db: AsyncSession = Depen
 
 @router.post("/sign-in", response_model=AuthResponse)
 async def sign_in(req: SignInRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    # Normalize email before lookup
-    email = req.email.strip().lower()
+    # Canonicalize email before lookup
+    email = normalize_email(req.email)
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
@@ -362,8 +391,8 @@ async def sign_out(
 
 @router.post("/verify-email/send", response_model=StatusResponse)
 async def send_verify_email(req: VerifyEmailSendRequest, db: AsyncSession = Depends(get_db)):
-    # Normalize email before lookup
-    email = req.email.strip().lower()
+    # Canonicalize email before lookup
+    email = normalize_email(req.email)
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
@@ -436,8 +465,8 @@ async def confirm_verify_email(req: VerifyEmailConfirmRequest, db: AsyncSession 
 
 @router.post("/password-reset/request", response_model=StatusResponse)
 async def request_password_reset(req: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
-    # Normalize email before lookup
-    email = req.email.strip().lower()
+    # Canonicalize email before lookup
+    email = normalize_email(req.email)
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()

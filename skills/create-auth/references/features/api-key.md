@@ -11,7 +11,7 @@ Generate and manage API keys for programmatic access.
 | userId | string | foreign key -> User, not null |
 | name | string | not null |
 | keyHash | string | unique, not null (SHA-256 of key) |
-| prefix | string | not null (first 8 chars of key) |
+| prefix | string | not null (the public lookup prefix — `fd_` + 8 random chars, see Key Format) |
 | scopes | string | nullable (JSON array of scopes) |
 | enabled | boolean | default true |
 | expiresAt | datetime | nullable |
@@ -65,6 +65,13 @@ The hash function and key generation logic should be extracted into a shared uti
 - Update the specified key. The `enabled` field allows disabling a key without deleting it (useful for incident response).
 - Return updated key metadata
 
+**POST /api/auth/api-keys/:keyId/rotate** _(optional, recommended)_
+
+- Requires valid session (Bearer token), the same proven-identifier gate as creation, and the same session freshness (sudo mode) that creation needs — rotation mints a new credential
+- Mint a fresh secret for the same row: keep the lookup `prefix` (it is public, and it is what the middleware finds the row by), overwrite `keyHash`, keep `id`, `name`, `scopes`, `expiresAt`, and bump `updatedAt`. Return `{ id, name, key, prefix, ... }` with the new plaintext `key` — shown once, exactly like creation
+- The old secret stops authenticating the moment the row is updated (no grace window by default; if a deploy needs overlap, keep a short-lived `previousKeyHash`/`previousKeyExpiresAt` pair on the row — same prefix, so the middleware compares against both until the expiry — and clear it after; never a permanent second key)
+- Rotation exists so the response to a leaked key is not "delete it and re-create it by hand": the row's identity, scopes, and audit history survive, and the incident is one call. Record who rotated it and when (see below)
+
 **API Key Authentication (middleware)**
 
 - Check for `Authorization: Bearer {prefix}_...` header or `X-API-Key` header
@@ -85,6 +92,7 @@ The hash function and key generation logic should be extracted into a shared uti
 - Creating a key requires a proven primary identifier, not just a live session — an API key is a bearer credential that outlives the session that minted it and is untouched by password reset, so an account that has proven no identifier at all must not be able to mint one
 - API key auth should work alongside session auth (check both)
 - Extract hash/generation into a shared utility — do not duplicate across router and middleware
+- Keep an audit trail for the credential lifecycle — who created, rotated, disabled, or deleted a key, and when (an `ApiKeyEvent` table or the app's audit log). New secrets leave the server only from the create and rotate responses; every other read path returns metadata and the prefix
 
 ## Best Practices (Industry Consensus)
 

@@ -17,13 +17,14 @@ None — rate limiting state is stored in the KV cache, not in dedicated tables.
 Use a fixed-window counter. It's the simplest approach and sufficient for auth endpoints (which handle low-to-moderate traffic compared to data APIs).
 
 **How it works:**
-1. Build the rate limit key from the request (see Key Composition below)
-2. `GET` the current counter from the KV cache using key `rl:{endpoint}:{identifier}`
-3. If no entry exists (or expired): `SET` counter to `"1"` with TTL = window size → allow request
-4. If entry exists and count < max: `SET` counter to `count + 1` with **the same remaining TTL** → allow request
-5. If entry exists and count >= max: reject with 429
+1. Build the rate limit key from the request (see Key Composition below), and align the window to the wall clock: `windowStart = floor(now / windowSeconds) * windowSeconds`, key `rl:{endpoint}:{identifier}:{windowStart}`
+2. `count = await kvCache.increment(key, windowSeconds)` — **one** atomic call that creates the counter at `1` with the window's TTL, or adds one to it, and returns the new value (see `references/features/kv-cache.md`)
+3. If `count <= max`: allow the request
+4. Otherwise reject with 429 and `Retry-After: windowStart + windowSeconds − now`
 
-**Remaining TTL matters.** When incrementing, don't reset the TTL to the full window — that would create a sliding window. Read the expiry from the existing entry and preserve it. If your KV backend doesn't expose remaining TTL, store the window start timestamp in the value alongside the count (e.g., `JSON.stringify({ count, windowStart })`), and compute the remaining TTL as `windowSize - (now - windowStart)`.
+**Check-and-increment is one step, not two.** A `get` → compare → `set(count + 1)` limiter is a read-modify-write race: a burst of concurrent requests all read the same stale count and all pass, so the limit holds against a polite client and fails against exactly the flood it exists for. `increment` decides on the value it returns, and every concurrent caller sees a distinct one. (better-auth 1.7 dropped support for `get`/`set`-shaped rate-limit stores for this reason; its `consume(key, rule)` is the same check-and-increment in one operation.)
+
+**The TTL is set when the key is created and never refreshed.** Refreshing it on every hit would turn the window into "N seconds after the last request", which under sustained traffic never closes — a legitimate user locked out by an attacker hammering their address stays locked out for as long as the attacker keeps hammering. Aligning the window to the wall clock and putting `windowStart` in the key means `Retry-After` is arithmetic — no TTL read-back — and a stale key simply expires unused. The cost is the usual fixed-window edge: up to `2 × max` requests can land in a short span straddling a boundary, which is acceptable for auth endpoints.
 
 ## Default Limits
 
@@ -40,7 +41,7 @@ These are defaults. The skill should generate them as configurable constants (en
 
 ## Key Composition
 
-The rate limit key determines what is being throttled. Use the pattern `rl:{endpoint}:{identifier}`:
+The rate limit key determines what is being throttled. Use the pattern `rl:{endpoint}:{identifier}`, and let the middleware append the aligned `:{windowStart}` segment described above (the examples below omit it):
 
 - **Sign-in**: `rl:sign-in:{ip}:{email}` — keyed on both IP and email. This prevents credential stuffing (many passwords for one email) while still allowing different users from the same IP (e.g., corporate NAT, shared wifi).
 - **Sign-up**: `rl:sign-up:{ip}` — keyed on IP only. Email isn't useful here because attackers use different emails.
@@ -69,43 +70,39 @@ The rate limiter should be structured as middleware that can be applied to indiv
 ```
 function rateLimitMiddleware(kvCache, config) {
   return async function(request, next) {
-    // 1. Build the key
-    const key = buildRateLimitKey(request, config.endpoint)
+    // 1. Build the key, aligned to a wall-clock window
+    const nowSec = Math.floor(Date.now() / 1000)
+    const windowStart = nowSec - (nowSec % config.windowSeconds)
+    const key = `${buildRateLimitKey(request, config.endpoint)}:${windowStart}`
 
-    // 2. Check current count
-    const entry = await kvCache.get(key)
-
-    if (entry === null) {
-      // First request in this window
-      await kvCache.set(key, JSON.stringify({ count: 1, windowStart: now() }), config.windowSeconds)
+    // 2. Check-and-increment in ONE atomic step; TTL applies only when the key is created
+    let count
+    try {
+      count = await kvCache.increment(key, config.windowSeconds)
+    } catch (err) {
+      log.error("rate limiter store unavailable", err)   // fail open — see Implementation Rules
       return next(request)
     }
 
-    // Corrupt entry (truncated, foreign write, the string "null") — treat as a fresh window, never throw
-    const parsed = tryParseJSON(entry)
-    if (!parsed || typeof parsed.count !== "number" || typeof parsed.windowStart !== "number") {
-      await kvCache.set(key, JSON.stringify({ count: 1, windowStart: now() }), config.windowSeconds)
+    // 3. Decide on the value increment returned — no second read, no set
+    if (!Number.isInteger(count) || count < 1) {
+      log.error("rate limiter store returned a non-count", { key, count })  // corrupt/foreign write — fail open
       return next(request)
     }
-    const { count, windowStart } = parsed
-
-    if (count >= config.max) {
-      // Over limit
-      const retryAfter = config.windowSeconds - secondsSince(windowStart)
+    if (count > config.max) {
+      const retryAfter = Math.max(windowStart + config.windowSeconds - nowSec, 1)
       return respond(429, {
         error: "rate_limited",
         message: "Too many requests. Please try again later.",
-        retryAfter: Math.max(retryAfter, 1)
-      }, { "Retry-After": String(Math.max(retryAfter, 1)) })
+        retryAfter
+      }, { "Retry-After": String(retryAfter) })
     }
-
-    // Increment — preserve the original window expiry
-    const remainingTtl = config.windowSeconds - secondsSince(windowStart)
-    await kvCache.set(key, JSON.stringify({ count: count + 1, windowStart }), Math.max(remainingTtl, 1))
     return next(request)
   }
 }
 ```
+
+A backend that returns something other than a positive integer from `increment` (a corrupt or foreign write at that key) is a store failure, not a count: log it and take the same fail-open branch, never throw out of the middleware and never treat it as `0`.
 
 ## Response on Rate Limit
 
@@ -146,8 +143,8 @@ Setting an endpoint to `false` or `null` disables rate limiting for that endpoin
 - **Make limits configurable.** Use environment variables or a config object — don't hardcode window sizes and max counts into the middleware.
 - **Don't rate limit `GET /session`** — it's read-only and already token-protected. Rate limiting it would add latency to every authenticated page load.
 - **Fail open.** If the KV cache is unavailable (Redis down, database timeout), allow the request through. Blocking legitimate users is worse than temporarily losing rate limiting. Log the failure loudly for monitoring. Code-verification counters (OTP, 2FA) fail **closed** instead.
-- **Don't use distributed locking.** A few extra requests sneaking through during a race condition between cache read and write is fine. Auth rate limits are approximate by nature.
-- **Await the counter write before responding.** The limiter's `set` is not fire-and-forget. On serverless and edge runtimes the instance can be frozen the moment the response is returned, so an unawaited increment may never reach the store and the next request sees a stale count. Only genuinely best-effort work may be deferred, and only through a mechanism the platform guarantees — `waitUntil`, a queue, or cron — with an awaited fallback when none is configured.
+- **Don't use distributed locking — use `increment`.** The atomic counter is what makes the limit hold under a burst; a lock on top of `get`/`set` is slower and no more correct. Auth rate limits are still approximate at window boundaries, and that is fine.
+- **Await the counter write before responding.** The limiter's `increment` is not fire-and-forget. On serverless and edge runtimes the instance can be frozen the moment the response is returned, so an unawaited increment may never reach the store and the next request sees a stale count. Only genuinely best-effort work may be deferred, and only through a mechanism the platform guarantees — `waitUntil`, a queue, or cron — with an awaited fallback when none is configured.
 - **IP behind proxies.** Document which trusted client-IP header the limiter reads and require the user to configure their reverse proxy (nginx, Cloudflare, etc.) to set it. A limiter left reading raw `X-Forwarded-For` is silently bypassable — worse than no limiter, because it looks like it works. With no trusted header configured, fall back to the connection IP and warn that limits will be coarser behind a proxy.
 
 ## Best Practices (Industry Consensus)
@@ -156,7 +153,7 @@ Setting an endpoint to `false` or `null` disables rate limiting for that endpoin
 - **Key on IP + email for sign-in.** This is the standard approach to prevent credential stuffing while allowing multiple users from the same network (corporate NAT, university wifi).
 - **Treat password reset as a login endpoint** in terms of rate limiting. OWASP guidance: password reset is functionally equivalent to authentication and should have the same protections.
 - **Limit OTP validation attempts.** Cap verification tries (e.g., 5 per 15 min per target) to prevent brute-forcing short codes. A 6-digit OTP has only ~20 bits of entropy — without rate limiting, it can be brute-forced in seconds.
-- **Progressive delays for repeated failures.** Consider exponential backoff (doubling the wait after each failure) for the same key. This slows automated attacks without permanently locking legitimate users. Implementation: track failure count in the KV cache alongside the rate limit counter.
+- **Progressive delays for repeated failures.** Consider exponential backoff (doubling the wait after each failure) for the same key. This slows automated attacks without permanently locking legitimate users. Implementation: track the failure count with its own `increment`ed key alongside the rate limit counter.
 - **Return consistent error shapes.** The 429 response body should match the project's error format for other endpoints (same `error` field name, same structure). Don't introduce a different error format just for rate limiting.
 - **Log rate limit hits.** Log when a client is rate-limited (IP, endpoint, count) for security monitoring. Don't log the full request body — it may contain passwords.
 - **Normalize IPv6.** Convert `::ffff:x.x.x.x` to plain IPv4. Without this, the same client can trivially bypass IP-based limits by switching address formats.
@@ -172,7 +169,7 @@ These open-source projects demonstrate rate limiting patterns across languages a
 | [express-rate-limit](https://github.com/express-rate-limit/express-rate-limit) | ~3.2k | Fixed window (dual-map rotation) | In-memory (built-in); Redis, Memcached, MongoDB, PostgreSQL via community stores | `source/memory-store.ts` (store impl), `source/types.ts` (`Store` interface: `increment(key)`) |
 | [rate-limiter-flexible](https://github.com/animir/node-rate-limiter-flexible) | ~3.5k | Enhanced fixed window (atomic increments) | Memory, Redis, PostgreSQL, MySQL, MongoDB, Memcached, DynamoDB, SQLite, Prisma, Drizzle | `lib/RateLimiterStoreAbstract.js` (abstract store: `_upsert`, `_get`, `_delete`), `lib/RateLimiterRedis.js`, `lib/RateLimiterPostgres.js` |
 | [@upstash/ratelimit](https://github.com/upstash/ratelimit-js) | ~2.0k | Fixed window, sliding window, token bucket (all via Lua scripts) | Upstash Redis (HTTP-based, serverless) | `src/lua-scripts/single.ts` (Lua scripts for all 3 algorithms), `src/single.ts` |
-| [better-auth](https://github.com/better-auth/better-auth) | ~8k | Fixed window | In-memory, database, secondary storage, custom `get`/`set` | `docs/content/docs/concepts/rate-limit.mdx` (design), custom storage via `rateLimit.customStorage` |
+| [better-auth](https://github.com/better-auth/better-auth) | ~8k | Fixed window | In-memory, database, secondary storage, custom `consume(key, rule)` (atomic check-and-increment; `get`/`set` stores rejected since 1.7) | `docs/content/docs/concepts/rate-limit.mdx` (design), custom storage via `rateLimit.customStorage` |
 
 ### Go
 
@@ -204,6 +201,6 @@ These open-source projects demonstrate rate limiting patterns across languages a
 |----------|----------|-------|
 | [Supabase Auth](https://github.com/supabase/auth) | In-memory token bucket (tollbooth) | No Redis; each instance handles its own traffic. Per-endpoint limits: email 30/hr, SMS 30/hr, OTP 30/hr, token refresh 150/hr |
 | [Unkey](https://github.com/unkeyed/unkey) (~5.2k stars) | Sliding window with distributed replication | `internal/services/ratelimit/window.go` (duration-aligned windows), `janitor.go` (cleanup), `replay.go` (cross-node consistency) |
-| [better-auth](https://github.com/better-auth/better-auth) | Fixed window, pluggable storage | 60s window / 100 req default; supports in-memory, database, custom `get`/`set` |
+| [better-auth](https://github.com/better-auth/better-auth) | Fixed window, pluggable storage | 60s window / 100 req default; supports in-memory, database, and a custom store exposing one atomic `consume` |
 
 Sources: [OWASP API Security — Broken Authentication](https://owasp.org/API-Security/editions/2023/en/0xa2-broken-authentication/), [OWASP API Security — Unrestricted Resource Consumption](https://owasp.org/API-Security/editions/2023/en/0xa4-unrestricted-resource-consumption/), [Cloudflare Rate Limiting Best Practices](https://developers.cloudflare.com/waf/rate-limiting-rules/best-practices/), [better-auth Rate Limiting](https://www.better-auth.com/docs/concepts/rate-limit)

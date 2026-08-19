@@ -93,6 +93,28 @@ interface SuccessResponse {
 
 const OK: SuccessResponse = { success: true };
 
+// Canonicalize before validating (CWE-180): NFKC first, so a homoglyph such as a
+// fullwidth ＠ (U+FF20) is folded before the single-@ check runs, and the string we
+// validate is the exact string we store and mail — a mailer that normalizes on its
+// own must never see something different from what we checked. Non-ASCII is then
+// rejected outright: this reference does not support internationalized addresses.
+function normalizeEmail(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  return raw.normalize("NFKC").trim().toLowerCase();
+}
+
+// Strict lowercase RFC 5322 dot-atom on both sides — no quotes, comments, angle
+// brackets, commas, spaces, or non-ASCII — so no mail library can re-parse the string
+// we validated into a different recipient. Exactly one "@", ≤ 254 chars. Uppercase is
+// rejected on purpose: the validator then fails closed on anything that skipped
+// normalizeEmail. IP-literal domains (`user@[127.0.0.1]`) are not accepted.
+const EMAIL_SHAPE =
+  /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9-]+(?:\.[a-z0-9-]+)*$/;
+
+function isValidEmail(email: string): boolean {
+  return email.length <= 254 && EMAIL_SHAPE.test(email);
+}
+
 // This reference ships no mail transport. Point these at your provider (SES, Resend,
 // Postmark, ...) before using any of this: the raw token is never persisted, so a link
 // that is not delivered cannot be recovered from the database.
@@ -130,10 +152,11 @@ async function issueVerificationToken(
 
 router.post("/sign-up", async (req: Request, res: Response) => {
   const { email: rawEmail, password, name } = req.body;
-  // Normalize email so lookups and the unique constraint are case-insensitive
-  const email = rawEmail?.trim().toLowerCase();
+  // Canonicalize before validating, so lookups and the unique constraint see one
+  // spelling per address
+  const email = normalizeEmail(rawEmail);
 
-  if (!email || !password || password.length < 8) {
+  if (!email || !isValidEmail(email) || !password || password.length < 8) {
     return res.status(400).json({ error: "Invalid email or password (min 8 chars)" });
   }
 
@@ -200,8 +223,12 @@ router.post("/sign-up", async (req: Request, res: Response) => {
 
 router.post("/sign-in", async (req: Request, res: Response) => {
   const { email: rawEmail, password } = req.body;
-  // Normalize email the same way sign-up does before the lookup
-  const email = rawEmail?.trim().toLowerCase();
+  // Canonicalize the email the same way sign-up does before the lookup
+  const email = normalizeEmail(rawEmail);
+
+  if (!email) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
 
   const user = await prisma.user.findUnique({
     where: { email },
@@ -268,8 +295,8 @@ router.post("/sign-out", async (req: Request, res: Response) => {
 // Rate limit it per address and per IP (3/hour is reasonable) — it sends mail on demand.
 router.post("/verify-email/send", async (req: Request, res: Response) => {
   const { email: rawEmail } = req.body as EmailBody;
-  // Normalize the email the same way sign-up does before the lookup
-  const email = rawEmail?.trim().toLowerCase();
+  // Canonicalize the email the same way sign-up does before the lookup
+  const email = normalizeEmail(rawEmail);
 
   if (!email) {
     return res.status(400).json({ error: "Email is required" });
@@ -333,7 +360,7 @@ router.post("/verify-email/confirm", async (req: Request, res: Response) => {
 // Same contract as /verify-email/send, on a 30-minute token. Rate limit it the same way.
 router.post("/password-reset/request", async (req: Request, res: Response) => {
   const { email: rawEmail } = req.body as EmailBody;
-  const email = rawEmail?.trim().toLowerCase();
+  const email = normalizeEmail(rawEmail);
 
   if (!email) {
     return res.status(400).json({ error: "Email is required" });

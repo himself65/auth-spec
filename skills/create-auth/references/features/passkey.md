@@ -20,7 +20,7 @@ Passwordless authentication using platform authenticators (Touch ID, Windows Hel
 | lastUsedAt      | datetime | nullable                                     |
 | createdAt       | datetime | default now                                  |
 
-**PasskeyChallenge** (ephemeral — can use cache/Redis instead of a table)
+**PasskeyChallenge** (ephemeral — can live in the KV cache instead of a table; either way it is consumed with one atomic read-and-delete, see below)
 | Field     | Type     | Constraints                    |
 |-----------|----------|--------------------------------|
 | id        | string   | primary key                    |
@@ -79,7 +79,7 @@ Verify WebAuthn registration (attestation) response and store the new passkey.
 - **Response 400**: invalid/expired challenge, verification failed
 
 Server must:
-1. Retrieve the stored challenge for this user (type: "registration")
+1. Parse the body shape first (schema, base64url decode, `clientDataJSON` parses) — a malformed request is a 400 that spends nothing. Then read `clientDataJSON.challenge` (a pure parse) and **consume** the stored challenge with one atomic read-and-delete keyed on it — `DELETE FROM passkey_challenge WHERE challenge = $1 AND type = 'registration' AND expires_at > now() RETURNING user_id`, or KV `getAndDelete('passkey-challenge:registration:{challenge}')` — *before* any check that depends on the challenge or on server state. Nothing back means absent, expired, or already used by a concurrent request: reject. The returned `user_id` must equal the session's user. A challenge is single-use whether or not the ceremony then succeeds; a failed attempt asks for fresh options. Find → verify → *unconditional* delete lets two concurrent submissions of one response both pass; consume-first is the simpler shape and the one this spec uses (a conditional delete used as the gate is equally race-free — `references/pitfalls/single-use-token-race.md`)
 2. Verify the attestation response:
    - `clientDataJSON.type` === `"webauthn.create"`
    - `clientDataJSON.challenge` matches stored challenge
@@ -89,8 +89,7 @@ Server must:
    - Extract public key, credential ID, counter, device type, backed-up flag
 3. Check credential ID is not already registered (prevent duplicate)
 4. Store new Passkey record with all extracted fields
-5. Delete the used challenge
-6. Return passkey metadata (never return the public key to the client)
+5. Return passkey metadata (never return the public key to the client)
 
 ### POST /api/auth/passkey/authenticate/options
 
@@ -132,7 +131,7 @@ Verify WebAuthn authentication (assertion) response and sign the user in.
 Server must:
 1. Extract credential ID from the response
 2. Look up the Passkey record by credential ID
-3. Retrieve the stored challenge (type: "authentication")
+3. **Consume** the stored challenge with the same atomic read-and-delete as registration, keyed on `clientDataJSON.challenge` and `type = 'authentication'` (there is no session and `userId` may be null, so the challenge value is the only handle) — before verifying, single-use regardless of outcome. When the options call was made with `email`, the row's `user_id` must equal the credential's owner
 4. Verify the assertion response:
    - `clientDataJSON.type` === `"webauthn.get"`
    - `clientDataJSON.challenge` matches stored challenge
@@ -142,8 +141,7 @@ Server must:
    - Signature is valid against stored public key
    - Counter > stored counter (detects cloned authenticators)
 5. Update the passkey's counter and `lastUsedAt`
-6. Delete the used challenge
-7. Create a new Session and return token + user
+6. Create a new Session and return token + user
 
 ### DELETE /api/auth/passkey/:passkeyId
 
@@ -195,8 +193,8 @@ Never return `publicKey` or `credentialId` to the client in listing responses.
 
 - Crypto-random, minimum 32 bytes, base64url-encoded
 - 5-minute expiry (configurable)
-- Single-use: delete after verification (prevents replay)
-- Store server-side only (cache, DB, or session)
+- Single-use: consumed with one atomic read-and-delete *before* verification (prevents replay, and stops two concurrent submissions of one response from both minting a session)
+- Store server-side only (KV cache with `getAndDelete`, DB with `DELETE … RETURNING`, or session)
 
 ### Credential Storage
 
@@ -214,6 +212,7 @@ Never return `publicKey` or `credentialId` to the client in listing responses.
 ### Security
 
 - **Registration requires an existing session AND a proven primary identifier** (`emailVerified` for an email account, `phoneVerified` for a phone-only one) — a session minted at sign-up proves possession of a password, not of the identifier. A passkey registered on an unclaimed identifier is a worse persistence primitive than the password that created it: it survives password reset, and its own sign-in path needs no session at all (see the authenticate endpoints above). Never gate registration on a live session alone.
+- **Passkey-first onboarding keeps that order.** "Sign up with a passkey" is fine, but only as a variant of the rule above, not an exception to it: if you build it, both register legs accept a server-signed **registration context** *in place of* the session — issued only by a completed email-OTP or magic-link proof, bound to that identifier, ≤ 10 min, consumed atomically when the account is created — and the User row is created through the shared sign-up gate in `SKILL.md`, in the same transaction as the Passkey and the first Session (upstream's `registration.requireSession: false` + `resolveUser` validating the context + `createSession` is the same shape). The proven-identifier gate is unchanged. The simplest equivalent needs no new machinery: OTP or magic-link sign-in first, which mints a verified session, then ordinary registration. Never let a WebAuthn ceremony create an account whose identifier nobody has proved: that is a passkey planted on an unclaimed address, the exact persistence the gate above exists to prevent
 - **Authentication is passwordless** — no prior session needed
 - **Attestation**: use `"none"` for consumer apps. Only use `"direct"` or `"enterprise"` when compliance requires device provenance.
 - **Never expose `publicKey` or raw `credentialId` in API list responses** — only return metadata

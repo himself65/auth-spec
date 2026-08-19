@@ -26,7 +26,7 @@ Weak password hashing or leaked secrets are the most direct path to mass account
 | Password max length | Enforce a hard upper bound (e.g. 128, or 64 for bcrypt-only when not pre-hashing) to prevent long-password DoS. |
 | Breached password check | At sign-up and password change, reject passwords found in known breach corpora. Use the HIBP Pwned Passwords k-anonymity API (SHA-1 prefix) or an offline bloom filter — **never** send the full password. |
 | Password complexity rules | NIST SP 800-63B rev.4 **deprecates** forced complexity/rotation. Do not require uppercase/symbols. Do not force periodic rotation — rotate only on suspected compromise. |
-| Key rotation | Rotate JWT/HMAC secrets and DB encryption keys periodically. Support multiple active verifiers during rollover. Document the rotation process. |
+| Key rotation | Rotate JWT/HMAC secrets and DB encryption keys periodically. Support multiple active keys during rollover on both sides: as an issuer, publish old and new public keys together at your JWKS; as a verifier, accept a *list* of trusted certificates/keys (a SAML SP taking old + new IdP certificates is exactly this) — so rotation needs no downtime. Document the rotation process. Validate every configured key at **startup** (module load / cold start on serverless) — algorithm matches the key type, private material is present, the secret is not empty or a placeholder — and refuse to boot otherwise; a mismatch that is only exercised on first use has been latent the whole time, "silently doing the wrong thing" in upstream's words (better-auth 1.7 moved its signed-assertion validation to configuration time for this reason). |
 
 ### Incorrect
 
