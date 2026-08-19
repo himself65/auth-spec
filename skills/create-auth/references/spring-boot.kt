@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.*
 import org.springframework.web.server.ResponseStatusException
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.text.Normalizer
 import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -186,6 +187,27 @@ class AuthController(
             .digest(token.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
+    // Canonicalize before validating (CWE-180): NFKC first, so a homoglyph such as a
+    // fullwidth ＠ (U+FF20) is folded before the single-@ check runs, and the string we
+    // validate is the exact string we store and mail — a mailer that normalizes on its
+    // own must never see something different from what we checked. Non-ASCII that
+    // survives is then rejected outright: this reference does not support
+    // internationalized addresses.
+    private fun normalizeEmail(raw: String): String =
+        Normalizer.normalize(raw, Normalizer.Form.NFKC).trim().lowercase()
+
+    // Strict lowercase RFC 5322 dot-atom on both sides — no quotes, comments, angle
+    // brackets, commas, spaces, or non-ASCII — so no mail library can re-parse the
+    // string we validated into a different recipient. Exactly one "@", ≤ 254 chars.
+    // Uppercase is rejected on purpose: the validator then fails closed on anything
+    // that skipped normalizeEmail. IP-literal domains (`user@[127.0.0.1]`) are not
+    // accepted.
+    private val emailShape = Regex(
+        "[a-z0-9!#\$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#\$%&'*+/=?^_`{|}~-]+)*@[a-z0-9-]+(?:\\.[a-z0-9-]+)*"
+    )
+
+    private fun isValidEmail(email: String): Boolean = email.length <= 254 && emailShape.matches(email)
+
     // Replaces any outstanding token for this purpose and returns the raw value, which
     // is stored nowhere — only its SHA-256 reaches the database.
     private fun issueVerificationToken(user: User, purpose: String, ttl: Duration): String {
@@ -220,9 +242,9 @@ class AuthController(
 
     @PostMapping("/sign-up")
     fun signUp(@RequestBody req: SignUpRequest, request: HttpServletRequest): ResponseEntity<AuthResponse> {
-        // Normalize email so lookups and uniqueness are case-insensitive
-        val email = req.email.trim().lowercase()
-        if (email.isBlank() || req.password.length < 8) {
+        // Canonicalize email before validation and storage
+        val email = normalizeEmail(req.email)
+        if (!isValidEmail(email) || req.password.length < 8) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid email or password (min 8 chars)")
         }
 
@@ -281,7 +303,7 @@ class AuthController(
 
     @PostMapping("/sign-in")
     fun signIn(@RequestBody req: SignInRequest, request: HttpServletRequest): AuthResponse {
-        val email = req.email.trim().lowercase()
+        val email = normalizeEmail(req.email)
         val user = userRepo.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials")
 
@@ -350,7 +372,7 @@ class AuthController(
 
     @PostMapping("/verify-email/send")
     fun sendVerifyEmail(@RequestBody req: VerifyEmailSendRequest): StatusResponse {
-        val email = req.email.trim().lowercase()
+        val email = normalizeEmail(req.email)
         val user = userRepo.findByEmail(email)
 
         // Rate limit this per address and per IP (3 per hour is reasonable) — it sends
@@ -401,7 +423,7 @@ class AuthController(
 
     @PostMapping("/password-reset/request")
     fun requestPasswordReset(@RequestBody req: PasswordResetRequest): StatusResponse {
-        val email = req.email.trim().lowercase()
+        val email = normalizeEmail(req.email)
         val user = userRepo.findByEmail(email)
 
         // Rate limit per address and per IP, as with verify-email/send

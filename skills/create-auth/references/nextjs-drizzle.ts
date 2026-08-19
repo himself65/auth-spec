@@ -56,6 +56,29 @@ export const verificationTokens = pgTable("verification_tokens", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// --- lib/email.ts ---
+// Canonicalize before validating (CWE-180): NFKC first, so a homoglyph such as a
+// fullwidth ＠ (U+FF20) is folded before the single-@ check runs, and the string we
+// validate is the exact string we store and mail — a mailer that normalizes on its
+// own must never see something different from what we checked. Non-ASCII is then
+// rejected outright: this reference does not support internationalized addresses.
+export function normalizeEmail(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  return raw.normalize("NFKC").trim().toLowerCase();
+}
+
+// Strict lowercase RFC 5322 dot-atom on both sides — no quotes, comments, angle
+// brackets, commas, spaces, or non-ASCII — so no mail library can re-parse the string
+// we validated into a different recipient. Exactly one "@", ≤ 254 chars. Uppercase is
+// rejected on purpose: the validator then fails closed on anything that skipped
+// normalizeEmail. IP-literal domains (`user@[127.0.0.1]`) are not accepted.
+const EMAIL_SHAPE =
+  /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9-]+(?:\.[a-z0-9-]+)*$/;
+
+export function isValidEmail(email: string): boolean {
+  return email.length <= 254 && EMAIL_SHAPE.test(email);
+}
+
 // --- lib/verification.ts ---
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -185,15 +208,17 @@ export async function sendVerificationLink(
 // `db` and `eq` are imported by the lib/verification.ts section above; in a real
 // project each file repeats the imports it uses.
 import { users, accounts, sessions } from "@/lib/schema";
+import { normalizeEmail, isValidEmail } from "@/lib/email";
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
   const { email: rawEmail, password, name } = await request.json();
-  // Normalize email so lookups and the unique constraint are case-insensitive
-  const email = rawEmail?.trim().toLowerCase();
+  // Canonicalize before validating, so lookups and the unique constraint see one
+  // spelling per address
+  const email = normalizeEmail(rawEmail);
 
-  if (!email || !password || password.length < 8) {
+  if (!email || !isValidEmail(email) || !password || password.length < 8) {
     return NextResponse.json(
       { error: "Invalid email or password (min 8 chars)" },
       { status: 400 }
@@ -274,8 +299,15 @@ import { compare } from "bcryptjs";
 
 export async function POST(request: Request) {
   const { email: rawEmail, password } = await request.json();
-  // Normalize email the same way sign-up does before the lookup
-  const email = rawEmail?.trim().toLowerCase();
+  // Canonicalize the email the same way sign-up does before the lookup
+  const email = normalizeEmail(rawEmail);
+
+  if (!email) {
+    return NextResponse.json(
+      { error: "Invalid credentials" },
+      { status: 401 }
+    );
+  }
 
   const user = await db
     .select()
@@ -389,8 +421,8 @@ type VerifyEmailSendBody = { email?: string };
 
 export async function POST(request: Request) {
   const { email: rawEmail } = (await request.json()) as VerifyEmailSendBody;
-  // Normalize the email the same way sign-up does before the lookup
-  const email = rawEmail?.trim().toLowerCase();
+  // Canonicalize the email the same way sign-up does before the lookup
+  const email = normalizeEmail(rawEmail);
 
   if (!email) {
     return NextResponse.json({ error: "Invalid email" }, { status: 400 });
@@ -472,7 +504,7 @@ type PasswordResetRequestBody = { email?: string };
 
 export async function POST(request: Request) {
   const { email: rawEmail } = (await request.json()) as PasswordResetRequestBody;
-  const email = rawEmail?.trim().toLowerCase();
+  const email = normalizeEmail(rawEmail);
 
   if (!email) {
     return NextResponse.json({ error: "Invalid email" }, { status: 400 });

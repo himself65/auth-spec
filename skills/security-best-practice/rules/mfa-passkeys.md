@@ -42,7 +42,7 @@ MFA closes the "stolen password" attack class — but only if enrollment, recove
 |-------|------------|
 | Relying Party ID | `rpId` must be your registrable domain (e.g. `example.com`, not `auth.example.com`). Never set it to a public suffix. |
 | `origin` check | On verification, the returned `clientDataJSON.origin` must be in your allow-list of exact origins. No wildcards. |
-| Challenge | Server-generated random challenge (≥ 128 bits). One-time use. Bound to the session / short TTL (≤ 5 min). |
+| Challenge | Server-generated random challenge (≥ 128 bits). One-time use — consumed with a single atomic read-and-delete (`DELETE … RETURNING`, KV `getAndDelete`) *before* the ceremony is verified, so two concurrent submissions of one response cannot both mint a session and a failed attempt asks for fresh options. Bound to the session / short TTL (≤ 5 min). |
 | User verification (UV) | Require `userVerification: "required"` for passkey-only login; `preferred` if combined with password. Check `flags.uv` on the authenticator data. |
 | Attestation | `attestation: "none"` is fine for consumer apps. Use `"direct"` + attestation verification only if you need to restrict to specific authenticator vendors. |
 | Credential ID storage | Store the credential's ID, public key, sign counter, transports, and backup-state. Key on `(userId, credentialId)`. |

@@ -29,7 +29,7 @@ Unique constraint on (organizationId, userId).
 |----------------|----------|------------------------------------------|
 | id             | string   | primary key                              |
 | organizationId | string   | foreign key -> Organization, not null    |
-| email          | string   | not null (stored lowercased)             |
+| email          | string   | not null (stored in canonical form)      |
 | role           | string   | not null (default: "member")             |
 | tokenHash      | string   | unique, not null (SHA-256 of the raw token) |
 | expiresAt      | datetime | not null (default: 7 days)               |
@@ -67,7 +67,7 @@ Unique constraint on (organizationId, userId).
 
 **POST /api/auth/org/:slugOrId/invite**
 - Requires valid session + admin/owner role
-- Body: `{ email, role? }` (normalize the email: trim + lowercase)
+- Body: `{ email, role? }` (canonicalize the email through the shared helper — NFKC, trim, lowercase — and validate it, exactly as sign-up does)
 - Delete any pending invitation for the same email + organization (one outstanding invite)
 - Create invitation with a crypto-random token (32 bytes); store only its SHA-256 hash — the raw token exists only inside the emailed link
 - Return 200
@@ -85,8 +85,8 @@ Unique constraint on (organizationId, userId).
 - Return list of members with roles
 
 **PATCH /api/auth/org/:slugOrId/members/:userId**
-- Requires valid session + admin/owner role
-- Body: `{ role }`
+- Requires valid session + admin/owner role — and that check runs **before** the requested role is validated against the role set (the ordering fix better-auth shipped in 1.7) or the target member is looked up. Validation errors are observable: a caller who is not an admin must get the same 403 whether the role exists or not, or the endpoint is an oracle for which roles and members exist
+- Body: `{ role }` — the body carries the new role and nothing else; `id`, `organizationId`, `userId`, `createdAt` are path/server values, and the strict body schema rejects them if present
 - Cannot change own role, cannot demote the last owner
 - Return updated member
 
@@ -126,6 +126,7 @@ Notify the user that they were added, on top of the audit entry — silent place
 - Every route touching an organization resolves the organization id **once** and calls one shared predicate (`canManageOrg(userId, orgId)`) — including the create route, which is the one that drifts to a weaker rule than its siblings. See `references/pitfalls/authorization-must-match-the-action.md`
 - There must always be at least one owner
 - Membership and role grants have exactly one implementation — org creation, invitation acceptance, any automatic provisioning (SSO domain auto-join, directory sync), the admin console, and seed or backfill scripts all call it, and it owns the role-hierarchy check, the least-privilege default, and the audit record. Grep for direct inserts into OrganizationMember: each one is a side door around all three, and the `(organizationId, userId)` unique constraint — not an "is already a member" read before the insert — is what settles two concurrent grants.
+- If the organization has a seat cap (plan limits, "max N members"), enforce it with a `memberCount` column on the organization row bumped by a **guarded atomic increment** in the same transaction as the member insert — `UPDATE organization SET member_count = member_count + 1 WHERE id = $1 AND member_count < $2`, proceed only if exactly one row changed, and decrement in the same transaction as a removal. Never `count` → compare → `insert`, and note that a `count(*)`-guarded conditional insert is **not** race-free either under READ COMMITTED: two concurrent accepts of the last seat both snapshot `cap − 1` and both insert, so the "limit" is one over on every burst — it only holds under SERIALIZABLE with retry, or behind `SELECT … FROM organization WHERE id = $1 FOR UPDATE`. The row-locked guarded update is what settles it (better-auth 1.7 moved its team counters to exactly this shape).
 - Invitation tokens are crypto-random (32 bytes), stored hashed, single-use (consumed atomically)
 - Accepting an invitation requires the accepter's verified email to match the invited address
 - Invitations expire after 7 days by default

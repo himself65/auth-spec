@@ -151,6 +151,58 @@ func hashToken(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// normalizeEmail canonicalizes before validation (CWE-180): trim, then lowercase, and
+// the string that passes isValidEmail is the exact string we store and mail. The stdlib
+// has no NFKC, so instead of folding homoglyphs such as a fullwidth ＠ (U+FF20) we reject
+// every non-ASCII byte that survives trim + lowercase in isValidEmail — this reference
+// does not support internationalized addresses.
+func normalizeEmail(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+// isValidEmail accepts a strict lowercase RFC 5322 dot-atom on both sides — no quotes,
+// comments, angle brackets, commas, spaces, or non-ASCII — so no mail library can
+// re-parse the string we validated into a different recipient. Exactly one "@",
+// ≤ 254 bytes. Uppercase is rejected on purpose: the validator then fails closed on
+// anything that skipped normalizeEmail. IP-literal domains (`user@[127.0.0.1]`) are
+// not accepted.
+func isValidEmail(email string) bool {
+	if len(email) > 254 {
+		return false
+	}
+	at := strings.IndexByte(email, '@')
+	if at < 0 {
+		return false
+	}
+	return isDotAtom(email[:at], isAtext) && isDotAtom(email[at+1:], isLabelByte)
+}
+
+// isDotAtom: non-empty runs of bytes accepted by ok, joined by single dots.
+func isDotAtom(s string, ok func(byte) bool) bool {
+	if s == "" {
+		return false
+	}
+	for _, part := range strings.Split(s, ".") {
+		if part == "" {
+			return false
+		}
+		for i := 0; i < len(part); i++ {
+			if !ok(part[i]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isAtext(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || strings.IndexByte("!#$%&'*+/=?^_`{|}~-", c) >= 0
+}
+
+func isLabelByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
+}
+
 // execer is satisfied by both *sql.DB and *sql.Tx, so a token can be issued on
 // its own connection or inside sign-up's transaction.
 type execer interface {
@@ -211,10 +263,10 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Normalize email before validation and storage
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	// Canonicalize email before validation and storage
+	req.Email = normalizeEmail(req.Email)
 
-	if req.Email == "" || len(req.Password) < 8 {
+	if !isValidEmail(req.Email) || len(req.Password) < 8 {
 		http.Error(w, `{"error":"invalid email or password (min 8 chars)"}`, http.StatusBadRequest)
 		return
 	}
@@ -307,8 +359,8 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Normalize email before lookup
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	// Canonicalize email before lookup
+	req.Email = normalizeEmail(req.Email)
 
 	var user User
 	var passwordHash sql.NullString
@@ -388,8 +440,8 @@ func (h *AuthHandler) SendVerifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Normalize email before lookup
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	// Canonicalize email before lookup
+	req.Email = normalizeEmail(req.Email)
 
 	// Every branch below ends in the same 200: a response that varied with the
 	// lookup would turn this endpoint into an account-existence oracle. A failure
@@ -471,8 +523,8 @@ func (h *AuthHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Normalize email before lookup
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	// Canonicalize email before lookup
+	req.Email = normalizeEmail(req.Email)
 
 	var userID string
 	err := h.db.QueryRowContext(r.Context(),

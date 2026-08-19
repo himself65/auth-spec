@@ -164,6 +164,43 @@ fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
+// Canonicalize before validating (CWE-180): trim, then lowercase, and the string that
+// passes `is_valid_email` is the exact string we store and mail. std has no NFKC, so
+// instead of folding homoglyphs such as a fullwidth ＠ (U+FF20) we reject every
+// non-ASCII byte that survives trim + lowercase in `is_valid_email` — this reference
+// does not support internationalized addresses.
+fn normalize_email(raw: &str) -> String {
+    raw.trim().to_lowercase()
+}
+
+// Strict lowercase RFC 5322 dot-atom on both sides — no quotes, comments, angle
+// brackets, commas, spaces, or non-ASCII — so no mail library can re-parse the string
+// we validated into a different recipient. Exactly one '@', ≤ 254 bytes. Uppercase is
+// rejected on purpose: the validator then fails closed on anything that skipped
+// `normalize_email`. IP-literal domains (`user@[127.0.0.1]`) are not accepted.
+fn is_valid_email(email: &str) -> bool {
+    if email.len() > 254 {
+        return false;
+    }
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    is_dot_atom(local, is_atext) && is_dot_atom(domain, is_label_byte)
+}
+
+// Non-empty runs of bytes accepted by `ok`, joined by single dots.
+fn is_dot_atom(s: &str, ok: fn(u8) -> bool) -> bool {
+    !s.is_empty() && s.split('.').all(|part| !part.is_empty() && part.bytes().all(ok))
+}
+
+fn is_atext(c: u8) -> bool {
+    c.is_ascii_lowercase() || c.is_ascii_digit() || b"!#$%&'*+/=?^_`{|}~-".contains(&c)
+}
+
+fn is_label_byte(c: u8) -> bool {
+    c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-'
+}
+
 const SESSION_DURATION_DAYS: i64 = 7;
 
 const PURPOSE_VERIFY_EMAIL: &str = "verify-email";
@@ -257,9 +294,9 @@ async fn sign_up(
     headers: HeaderMap,
     Json(req): Json<SignUpRequest>,
 ) -> impl IntoResponse {
-    // Normalize email so lookups and uniqueness are case-insensitive
-    let email = req.email.trim().to_lowercase();
-    if email.is_empty() || req.password.len() < 8 {
+    // Canonicalize email before validation and storage
+    let email = normalize_email(&req.email);
+    if !is_valid_email(&email) || req.password.len() < 8 {
         return error_json(StatusCode::BAD_REQUEST, "invalid email or password (min 8 chars)").into_response();
     }
 
@@ -344,7 +381,7 @@ async fn sign_in(
     headers: HeaderMap,
     Json(req): Json<SignInRequest>,
 ) -> impl IntoResponse {
-    let email = req.email.trim().to_lowercase();
+    let email = normalize_email(&req.email);
     let row = sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
         "SELECT u.id, u.email, u.name, a.password_hash FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.email = $1 AND a.provider_id = 'credential'"
     )
@@ -438,7 +475,7 @@ async fn verify_email_send(
     State(pool): State<PgPool>,
     Json(req): Json<VerifyEmailSendRequest>,
 ) -> impl IntoResponse {
-    let email = req.email.trim().to_lowercase();
+    let email = normalize_email(&req.email);
 
     let row = sqlx::query_as::<_, (String,)>("SELECT id FROM users WHERE email = $1")
         .bind(&email)
@@ -503,7 +540,7 @@ async fn password_reset_request(
     State(pool): State<PgPool>,
     Json(req): Json<PasswordResetRequest>,
 ) -> impl IntoResponse {
-    let email = req.email.trim().to_lowercase();
+    let email = normalize_email(&req.email);
 
     let row = sqlx::query_as::<_, (String,)>("SELECT id FROM users WHERE email = $1")
         .bind(&email)
