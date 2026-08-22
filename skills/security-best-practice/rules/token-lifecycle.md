@@ -28,7 +28,7 @@ Email-verification links, password-reset links, magic links, OTPs, invitation to
 | Rate-limit issuance | See `rate-limiting.md`. Cap requests per account, per IP, and global — both to prevent enumeration and to prevent email/SMS bombardment. |
 | Constant-time lookup | Lookup by token-hash returns the same latency whether found or not. Don't branch on existence before hashing. |
 | Don't log tokens | No raw tokens in application logs, error logs, or third-party error trackers. Log only the token ID (a non-sensitive UUID) for support. |
-| Don't put tokens in URL fragments that then POST | A token in `?t=...` ends up in browser history, Referer, and analytics. Mitigate: strip from `Referer` (`Referrer-Policy: no-referrer` on reset pages), redirect away from the token URL once consumed, and keep TTL short. |
+| Don't put tokens in URL fragments that then POST | A token in `?t=...` ends up in browser history, Referer, and analytics. Mitigate: strip from `Referer` (`Referrer-Policy: no-referrer` on reset pages), redirect away from the token URL once consumed, and keep TTL short. If that reset page submits an **HTML form** rather than `fetch()`, `no-referrer` also nulls its `Origin` — the form's CSRF gate must accept `Sec-Fetch-Site: same-origin` or it will 403 the reset it was protecting (`csrf-protection.md`). |
 
 ### Checklist — Password Reset
 
