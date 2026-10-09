@@ -1,0 +1,13 @@
+{
+  "name": "acme-reset",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@prisma/client": "^6.2.0",
+    "argon2": "^0.41.1",
+    "express": "^4.21.2",
+    "ioredis": "^5.4.2",
+    "nodemailer": "^6.9.16"
+  },
+  "devDependencies": { "prisma": "^6.2.0", "typescript": "^5.7.2" }
+}

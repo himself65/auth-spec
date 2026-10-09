@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: audit-token-flows
+context:
+  # Needs --scaffold: copies evals/_fixtures/token-flows-app/ into the run workspace.
+  scaffold_script: scaffold.sh

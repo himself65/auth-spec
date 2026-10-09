@@ -1,0 +1,43 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  emailVerified Boolean    @default(false)
+  passwordHash  String?
+  createdAt     DateTime   @default(now())
+  sessions      Session[]
+  twoFactor     TwoFactor?
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+}
+
+// Short-lived values for every flow (OAuth state, magic links, password resets).
+model Verification {
+  id         String   @id @default(uuid())
+  identifier String
+  value      String   @unique
+  expiresAt  DateTime
+}
+
+model TwoFactor {
+  id          String  @id @default(uuid())
+  userId      String  @unique
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secret      String
+  backupCodes String
+  enabled     Boolean @default(false)
+}

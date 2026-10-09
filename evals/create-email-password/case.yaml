@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: create-email-password
+context:
+  # Needs --scaffold: copies evals/_fixtures/express-starter/ into the run workspace.
+  scaffold_script: scaffold.sh

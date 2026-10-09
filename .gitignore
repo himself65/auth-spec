@@ -8,3 +8,6 @@ coverage/
 .DS_Store
 
 __pycache__/
+
+# claude plugin eval output
+evals/results/

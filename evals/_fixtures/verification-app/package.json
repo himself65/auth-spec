@@ -1,0 +1,12 @@
+{
+  "name": "acme-web",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "tsx src/server.ts" },
+  "dependencies": {
+    "@prisma/client": "^6.2.0",
+    "express": "^4.21.2",
+    "nodemailer": "^6.9.16"
+  },
+  "devDependencies": { "prisma": "^6.2.0", "tsx": "^4.19.2", "typescript": "^5.7.2" }
+}
