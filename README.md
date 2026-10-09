@@ -43,6 +43,10 @@ Writing auth yourself helps you understand how it actually works — password ha
 | [create-auth](skills/create-auth/) | Scaffold sign-up, sign-in, session, and sign-out endpoints with security best practices | All |
 | [security-best-practice](skills/security-best-practice/) | Audit and harden your auth code against OWASP top 10 and common security pitfalls | All |
 
+## Evals
+
+Changes to the skills are measured, not eyeballed: [`evals/`](evals/) holds a `claude plugin eval` suite of planted-vulnerability audits, scaffolding tasks and false-positive/trigger controls. Before changing a skill, run `pnpm eval:compare` locally: it scores the base branch and your working tree on the same cases and flags any regression. See [`evals/README.md`](evals/README.md).
+
 ## License
 
 MIT

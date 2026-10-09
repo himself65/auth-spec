@@ -7,7 +7,10 @@
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
     "lint": "pnpm -r run lint",
-    "bump": "ccbump"
+    "bump": "ccbump",
+    "eval": "evals/scripts/run.sh",
+    "eval:check": "node evals/scripts/check-regex.mjs evals",
+    "eval:compare": "evals/scripts/compare-branch.sh"
   },
   "license": "MIT",
   "engines": {

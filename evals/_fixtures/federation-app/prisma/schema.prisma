@@ -1,0 +1,43 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  accounts      Account[]
+  sessions      Session[]
+}
+
+// providerId is the issuer for SSO accounts, "github" for social accounts.
+model Account {
+  id         String @id @default(uuid())
+  userId     String
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerId String
+  accountId  String
+
+  @@unique([providerId, accountId])
+}
+
+model SsoProvider {
+  id       String @id @default(uuid())
+  issuer   String
+  clientId String
+  jwksUri  String
+  ownerId  String
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+}
