@@ -17,40 +17,36 @@ Each sweep that adds a lesson to the spec should add (or extend) a case that fai
 
 ## Run it
 
-From the repo root:
+Everything runs locally, on your own Claude Code login — there is no CI job. From the repo root:
 
 ```bash
-# Validate every case (schemas, graders, scaffolds) without spending anything
-claude plugin eval . --trust-plugin --scaffold --allow-tools Write Edit --max-cost-usd 0 --no-publish
-
-# Free: regex graders hit written code and ignore skill text
-node evals/scripts/check-regex.mjs evals
-
-# Full suite, with-plugin arm only (what CI gates on)
-claude plugin eval . --trust-plugin --scaffold --allow-tools Write Edit --ablation none --runs 2 -j 4 --no-publish
-
-# Add the no-plugin baseline arm to see how much the skills are worth (Δ)
-claude plugin eval . --trust-plugin --scaffold --allow-tools Write Edit --runs 2 -j 4 --no-publish
+pnpm eval:check      # free: regex graders hit written code and never the skill's own text
+pnpm eval:compare    # did my change help? base (origin/main) vs working tree, per-case table
+pnpm eval            # full suite with the no-plugin baseline arm: how much the skills are worth (Δ)
 ```
 
-- `--scaffold` copies each case's fixture from `_fixtures/` into the run workspace. Without it the audit cases have no code to read.
-- `--allow-tools Write Edit` lets the `create-*` cases write code. Writes stay inside each run's workspace.
-- Iterate on one case with `--case 'create-*' --runs 1` (pass `--case` once; a glob selects several), or `--tag sweep-2026-10`.
-- Pin `--model` when comparing over time. The default judge is Haiku; use `--judge-model sonnet` when one verdict matters.
+**Before committing a change to `skills/`, run `pnpm eval:compare`.** It checks out the base ref in a temporary worktree, gives it this tree's `evals/` (same questions on both sides, so the only variable is the skill text), runs the with-plugin arm on each, and prints:
 
-### Did my change improve the skills?
+```
+Overall: 0.80 → 0.87 (+0.07)
+| Case | Base | Head | Δ | |
+```
 
-Run the same suite against the old and new skill text and diff the results:
+It exits 1 when the overall score drops by more than `TOLERANCE` (0.1) or any case drops by more than twice that. Results and both HTML reports go to `evals/results/compare-<timestamp>/` (gitignored).
 
 ```bash
-git worktree add ../auth-spec-base origin/main
-rm -rf ../auth-spec-base/evals && cp -R evals ../auth-spec-base/evals   # same questions on both sides
-claude plugin eval ../auth-spec-base --trust-plugin --scaffold --allow-tools Write Edit --ablation none --runs 3 --no-publish --json base.json
-claude plugin eval .                 --trust-plugin --scaffold --allow-tools Write Edit --ablation none --runs 3 --no-publish --json head.json
-node evals/scripts/compare.mjs base.json head.json
+pnpm eval:compare main                               # another base ref
+RUNS=3 MODEL=claude-opus-5-5 pnpm eval:compare       # more runs, pinned model
+pnpm eval:compare origin/main -- --case 'audit-*'    # extra flags go to claude plugin eval
+pnpm eval -- --case 'create-*' --runs 1              # iterate on one family cheaply
+pnpm eval -- --max-cost-usd 0                        # load and validate every case, spend nothing
 ```
 
-`compare.mjs` prints a per-case table and exits 1 if the overall score drops by more than the tolerance (default 0.1) or any case drops by more than twice it. The `Skill Eval` workflow does exactly this on every PR that touches `skills/`, `evals/` or the manifest, posts the table as a PR comment, and uploads both HTML reports. It needs an `ANTHROPIC_API_KEY` repository secret, and is skipped on fork PRs.
+- Cost: the whole suite is ≈ $1.9 per side per run (≈ $3.7 for one two-arm run); `pnpm eval:compare` at the default `RUNS=2` is ≈ $8. `MAX_COST` caps each side (default $20).
+- One run per case is noisy (agents vary, the judge votes 2 of 3). Use `RUNS=2`+ before trusting a small Δ, and pin `MODEL` when comparing results from different days.
+- `--scaffold` copies each case's fixture from `_fixtures/` into the run workspace; `--allow-tools Write Edit` lets the `create-*` cases write code inside it. Both scripts pass them.
+- `--case` takes one glob (a second `--case` replaces the first); `--tag sweep-2026-10` reruns a sweep's cases.
+- Never put a bare `--` in front of flags when calling `claude plugin eval` directly: it stops option parsing, so `--max-cost-usd 0` is silently ignored and the suite runs for real. The `pnpm` scripts strip the `--` that pnpm forwards, so `pnpm eval -- --flag` and `pnpm eval --flag` are both safe.
 
 ## Authoring
 
@@ -75,4 +71,4 @@ Layout per case: `prompt.md` (frontmatter = limits and tools, body = the user tu
 | `no-trigger-unrelated` | 1.00 | 1.00 | 0 | |
 
 Improvement targets these numbers point at: `create-auth`'s description does not trigger on adding a feature to existing auth; `security-best-practice` does not carry the pre-account-hijack check for passwordless/OAuth sign-in, and should verify a finding's precondition in the repo (read the schema) before assigning its severity. Fix one, rerun, and the table should move.
-- `Skill` graders are indicators only in two-arm runs; CI uses `--ablation none` so a skill that stops triggering fails the gate.
+- `Skill` graders are indicators only in two-arm runs; `eval:compare` uses `--ablation none`, so a skill that stops triggering shows up as a score drop.
