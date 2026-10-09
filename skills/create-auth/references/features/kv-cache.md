@@ -107,7 +107,7 @@ On Redis ≥ 7.0 the script can be replaced by `INCR` followed by `EXPIRE key tt
 
 ## Key Namespacing
 
-To avoid collisions between features sharing the same KV store, prefix keys by feature:
+Prefix every key by its purpose. This is a **security boundary**, not tidiness: a store shared by features whose presented value *is* the key lets a secret minted by one flow be redeemed by another — better-auth GHSA-965c-763c-88jm turned an OAuth `state` into a Magic Link sign-in as any user (see `references/pitfalls/cross-purpose-token-confusion.md`). The consumer builds the full key from its own constant prefix; never accept a prefix, or a whole key, from the request.
 
 | Feature         | Key pattern                          | Example                          |
 |-----------------|--------------------------------------|----------------------------------|
@@ -115,6 +115,8 @@ To avoid collisions between features sharing the same KV store, prefix keys by f
 | OTP attempts    | `otp-attempt:{target}`               | `otp-attempt:user@example.com` (bumped with `increment`) |
 | Email verify    | `email-verify:{sha256(token)}`       | `email-verify:9f86d0…` (keyed by the token's hash, never the raw token; the lookup and the consume are one `getAndDelete`) |
 | Lockout         | `lockout:{identifier}`               | `lockout:192.168.1.1` (bumped with `increment`) |
+| Passkey challenge | `passkey-challenge:{challenge}`    | consumed with `getAndDelete`, keyed on the challenge echoed in `clientDataJSON` |
+| OAuth state     | `oauth-state:{state}`                | consumed with `getAndDelete`; the stored record names the provider (`security-best-practice/rules/oauth-oidc.md`) |
 
 Features are responsible for constructing their own keys. The KV cache itself is agnostic to the key format.
 

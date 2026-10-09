@@ -21,6 +21,7 @@ TOTP-based second factor with backup codes.
 
 **POST /api/auth/two-factor/enable**
 - Requires valid session (Bearer token) **and a proven primary identifier** — `emailVerified` for an email account, `phoneVerified` for a phone-only one; a session minted at sign-up proves possession of a password, not of the identifier
+- If the user's TwoFactor row is already `enabled`: return 409 — never overwrite it. `userId` is unique, so the natural upsert would replace the active secret and every backup code on the strength of a session alone: a stolen session swaps in the attacker's authenticator, and an honest double-click locks the owner out of the one in their app (better-auth fixed this in 1.7.6, #11037). Re-enrolment goes through `/disable` with a current code first. A not-yet-enabled row may be replaced — nothing depends on it yet — but replace it with a conditional write (`WHERE user_id = $1 AND enabled = false`) so it cannot land after a concurrent `/verify` enabled it
 - Generate TOTP secret (base32 encoded, 20 bytes)
 - Generate 10 backup codes (8 chars each, crypto-random alphanumeric)
 - Store secret and hashed backup codes (not yet enabled)
