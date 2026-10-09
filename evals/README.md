@@ -67,7 +67,7 @@ Layout per case: `prompt.md` (frontmatter = limits and tools, body = the user tu
 | `create-magic-link-shared-table` | 1.00 | 0.71 | **+0.29** | Without: non-atomic consumption. `create-auth` did **not** fire on "add magic link to this project" |
 | `audit-token-flows` | 0.80 | 0.80 | 0 | Both arms miss pre-account hijack on magic-link sign-in |
 | `audit-federation` | 1.00 | 1.00 | 0 | The base model already finds both — ceiling |
-| `audit-clean-control` | 0.00 | 1.00 | −1 | With-skill reply rated pre-account hijack "High (depends on schema)" without reading `prisma/schema.prisma` |
+| `audit-clean-control` | 0.50 | 1.00 | −0.5 | Re-measured with 2 runs per arm after the fixture/rubric fixes ($0.81). The failing with-skill run rated pre-account hijack "High (conditional)" because "the schema isn't visible in `src/`" — it never opened `prisma/schema.prisma` |
 | `no-trigger-unrelated` | 1.00 | 1.00 | 0 | |
 
 Improvement targets these numbers point at: `create-auth`'s description does not trigger on adding a feature to existing auth; `security-best-practice` does not carry the pre-account-hijack check for passwordless/OAuth sign-in, and should verify a finding's precondition in the repo (read the schema) before assigning its severity. Fix one, rerun, and the table should move.
