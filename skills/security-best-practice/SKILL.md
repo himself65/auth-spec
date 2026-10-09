@@ -31,7 +31,7 @@ Individual security rules are in the `rules/` directory, organized by impact pri
 
 ## Step 1: Detect Project Context
 
-Before starting, scan the user's project to understand their stack:
+Before starting, scan the **whole repository** to understand their stack — even when the user names one directory or one flow. That narrows what you *report on*, not what you *read*: the schema, migrations, middleware and config that decide whether a finding is real usually live elsewhere (`prisma/`, `migrations/`, `db/`, the app entry point).
 
 1. Framework config files (`next.config.*`, `package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `build.gradle*`, `pom.xml`)
 2. Existing auth code — route handlers for sign-up, sign-in, session, sign-out, password reset, email verification
@@ -41,7 +41,7 @@ Before starting, scan the user's project to understand their stack:
 
 ## Step 2: Choose Audit Scope
 
-Use the `AskUserQuestion` tool to ask the user what they want to harden. Use **multiSelect: true** so they can pick multiple areas at once.
+If the user already said which areas (or "everything" / "don't ask"), use that and skip the question. Otherwise use the `AskUserQuestion` tool to ask the user what they want to harden. Use **multiSelect: true** so they can pick multiple areas at once.
 
 Ask "Which security areas do you want to audit and harden?" with header "Security audit scope".
 
@@ -59,13 +59,23 @@ Ask "Which security areas do you want to audit and harden?" with header "Securit
 
 ## Step 3: Run the Audit
 
-For each selected area, read the corresponding rule file from `rules/` and review the user's code against its checklist. Report findings as:
+**Read the rule file for every selected area before writing any finding** (all of them for a full audit). The checklists hold the non-obvious, auth-specific checks — account linking on an IdP email that was never verified, refresh-token reuse that should revoke the whole family, a sensitive action that needs a fresh sign-in — that a general code review does not think to look for. Then review the user's code against each checklist row. Report findings as:
 
 - **PASS** — implementation is correct
 - **FAIL** — vulnerability or misconfiguration found (include file path, line number, and fix)
 - **MISSING** — security control is absent (include where to add it and sample code)
 
-After the audit, apply fixes directly to the code. For each fix, explain what was wrong and why the fix is necessary. Link to the relevant rule file for reference.
+### Severity follows verified preconditions
+
+Many rows only bite under a condition — "if the account can hold a passkey", "if another flow writes this table", "if the proxy trusts `X-Forwarded-For`". Before you rate a finding, check its condition against the repository:
+
+1. **Verify what you can.** If the condition is decided by code or schema in the repo, read it and say what you found. Do not write "can't see the schema" about a schema that is in the repo.
+2. **Condition false → not a vulnerability.** At most a one-line note ("if you later add passkeys, strip them here too").
+3. **Condition genuinely outside the repo** (infrastructure, another service, a frontend that isn't here) → rate the code **as it stands**, and state the condition under which it would become more severe. Never headline a finding as "High (conditional)": a reader skimming severities acts on the label, not the caveat.
+
+### Fixes
+
+After the audit, apply fixes directly to the code — unless the user asked for a review only, in which case list the fixes and change nothing. For each fix, explain what was wrong and why the fix is necessary. Link to the relevant rule file for reference.
 
 ## Step 4: Generate Report
 

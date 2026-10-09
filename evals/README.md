@@ -58,6 +58,7 @@ Layout per case: `prompt.md` (frontmatter = limits and tools, body = the user tu
 - **Generation graders are `regex` over the trace, anchored on a `Write`/`Edit` input** (`"file_path": "….ts", "content": "…"` or `… "new_string": "…"`). An unanchored pattern matches the skill's own reference text when Claude `Read`s it, and passes without the code ever containing it. `check-regex.mjs` guards this: it runs every regex grader against a synthetic trace of good writes, bad writes, and a `Read` of skill text. Add cases to it when you add a grader.
 - **An `llm` judge with `focus: trace` sees only the first and last 12 lines** — never use it for code written mid-run.
 - **Controls keep the score honest — and fail for interesting reasons.** The clean-code control caught its own fixture twice: the first "correct" reset flow awaited `sendMail` only for existing accounts (a timing oracle), and the second set `emailVerified` without binding the address the link was mailed to — which the with-skill arm flagged from the spec's own value-binding rule and the no-plugin arm missed. When a control fails, read the reply before blaming the skill. State facts the reviewer could have verified (what the schema contains, which flows exist) in the rubric, so a "High, if the schema has X" is judged against the repo, and a medium with "upgrade if something outside the repo exists" stays medium.
+- `Skill` graders are indicators only in two-arm runs; `eval:compare` uses `--ablation none`, so a skill that stops triggering shows up as a score drop.
 
 ## Baseline (2026-10-09, one run per arm, default model)
 
@@ -65,10 +66,17 @@ Layout per case: `prompt.md` (frontmatter = limits and tools, body = the user tu
 |---|---|---|---|---|
 | `create-email-password` | 1.00 | 0.56 | **+0.44** | Without the skill: no `purpose` column, non-atomic consumption |
 | `create-magic-link-shared-table` | 1.00 | 0.71 | **+0.29** | Without: non-atomic consumption. `create-auth` did **not** fire on "add magic link to this project" |
-| `audit-token-flows` | 0.80 | 0.80 | 0 | Both arms miss pre-account hijack on magic-link sign-in |
+| `audit-token-flows` | 0.80 | 0.80 | 0 | Both arms "missed" pre-account hijack — correctly: the fixture had no password sign-up, so nothing could be planted. Fixed by adding `src/password.ts`; now 1.00 / 1.00 |
 | `audit-federation` | 1.00 | 1.00 | 0 | The base model already finds both — ceiling |
 | `audit-clean-control` | 0.50 | 1.00 | −0.5 | Re-measured with 2 runs per arm after the fixture/rubric fixes ($0.81). The failing with-skill run rated pre-account hijack "High (conditional)" because "the schema isn't visible in `src/`" — it never opened `prisma/schema.prisma` |
 | `no-trigger-unrelated` | 1.00 | 1.00 | 0 | |
 
-Improvement targets these numbers point at: `create-auth`'s description does not trigger on adding a feature to existing auth; `security-best-practice` does not carry the pre-account-hijack check for passwordless/OAuth sign-in, and should verify a finding's precondition in the repo (read the schema) before assigning its severity. Fix one, rerun, and the table should move.
-- `Skill` graders are indicators only in two-arm runs; `eval:compare` uses `--ablation none`, so a skill that stops triggering shows up as a score drop.
+Improvement targets these numbers pointed at, and what happened:
+
+| Target | Result |
+|---|---|
+| `security-best-practice` rates conditional findings "High" without reading the schema that refutes them | Fixed (Step 1 reads the whole repo; Step 3 rates severity from verified preconditions). Clean control, all runs since the fixture fixes: old skill 2 false-High in 9 runs, new skill 0 in 7. Costs ~1.5× per audit run because rule files are now read |
+| `security-best-practice` misses pre-account hijack | Not a skill gap — a fixture bug (see the table). The new skill said so explicitly: "no password sign-up route, so nothing can be pre-registered" |
+| `create-auth` does not trigger on adding a feature to existing auth | Open |
+
+When a skill "misses" a planted bug in every arm, check the bug's precondition actually holds in the fixture before blaming the skill.
