@@ -38,6 +38,7 @@ Passwordless authentication via emailed one-time links.
 - Store only the SHA-256 hash at rest (see Token Generation & Storage below); look up by hash at verify time
 - Each token is single-use — consume with one conditional write (affected-rows check), never find-then-delete
 - Delete all previous tokens for the same email when generating a new one
+- Keep tokens unredeemable by any other flow: this feature's own table (as above), or — if they share a verification table or the KV cache with OAuth state, reset tokens or challenges — a consumer-supplied `magic-link:` prefix or `purpose` match on every lookup. An OAuth `state` accepted here is a sign-in as any user (better-auth GHSA-965c-763c-88jm; see `references/pitfalls/cross-purpose-token-confusion.md`)
 - Do not reveal in error messages whether the email exists
 - On successful verification, resolve the User through the shared sign-up gate in `SKILL.md`'s Implementation Rules rather than inserting one here; if it permits a new account, create User + Account (providerId: "magic-link") with `emailVerified = true`
 - Never send to, resolve, or create against a synthesized placeholder address (`*.placeholder.invalid`, see `references/features/phone-number.md`) — treat a request for one as a no-op that still returns the generic success response

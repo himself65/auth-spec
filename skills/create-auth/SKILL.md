@@ -298,6 +298,7 @@ Before generating code, read **all** files in `references/pitfalls/` and follow 
 | Async proofs bind to the value proven   | `references/pitfalls/async-proof-value-binding.md`  |
 | NULL owner must deny, not skip the gate | `references/pitfalls/nullable-owner-gate.md`        |
 | Authorize the value the handler acts on | `references/pitfalls/authorization-must-match-the-action.md` |
+| Secrets are redeemable for one purpose only | `references/pitfalls/cross-purpose-token-confusion.md` |
 
 ## Reference Implementations
 
